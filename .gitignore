@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environments
+.env/
+.venv/
+env/
+.envs/
+
+# IDE
+.vscode/
+.idea/
+
+# Notebook cache
+.ipynb_checkpoints/
+
+# Secrets
+.env
+
+# Logs
+*.log
