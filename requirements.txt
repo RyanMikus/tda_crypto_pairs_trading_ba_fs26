@@ -4,3 +4,5 @@ scipy
 scikit-learn
 giotto-tda
 ccxt
+ripser
+websockets
