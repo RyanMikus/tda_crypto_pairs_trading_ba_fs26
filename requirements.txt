@@ -16,8 +16,8 @@ debugpy==1.8.20
 decorator==5.2.1
 executing==2.2.1
 frozenlist==1.8.0
-giotto-ph==0.2.4
-giotto-tda==0.6.2
+#giotto-ph==0.2.4
+#giotto-tda==0.6.2
 idna==3.11
 igraph==1.0.0
 ipykernel==7.2.0
@@ -69,3 +69,4 @@ urllib3==2.6.3
 wcwidth==0.6.0
 widgetsnbextension==4.0.15
 yarl==1.23.0
+
