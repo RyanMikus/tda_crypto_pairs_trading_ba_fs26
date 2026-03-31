@@ -1,0 +1,25 @@
+# ============================================================
+# TDA Crypto Trading – Conda Environment (Windows)
+# ============================================================
+#
+# SETUP:
+#   1. Visual Studio Build Tools installieren (C++ Workload)
+#   2. conda env create -f environment.yml
+#   3. conda activate tda-trading
+#
+# Pakete werden aus requirements.txt gelesen (gemeinsame Basis
+# mit dem Mac-Setup). Änderungen NUR in requirements.txt!
+# ============================================================
+
+name: tda-trading
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+
+  - pip
+  - pip:
+      - -r requirements.txt
