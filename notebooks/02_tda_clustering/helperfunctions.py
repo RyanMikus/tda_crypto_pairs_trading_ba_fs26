@@ -57,6 +57,9 @@ class HelperFunctions:
             numpy Array. Die Diagonale ist 0.
         """
         corr = np.corrcoef(returns_window.to_numpy().T)
+        print(f"Korrelationsmatrix: {corr.shape[0]} Assets, {corr.shape[1]} Assets")
+        print(f"Korrelationsmatrix: min={np.nanmin(corr):.4f}, max={np.nanmax(corr):.4f}, mean={np.nanmean(corr):.4f}")
+        print(f"gesamte corr: {corr}")
         corr = np.nan_to_num(corr, nan=0.0)
         corr = np.clip(corr, -1.0, 1.0)
         dist = np.sqrt(np.maximum(0.0, 2.0 * (1.0 - corr)))
@@ -258,15 +261,6 @@ class HelperFunctions:
         prozentuale Preischange aller Assets an diesem Zeitstempel:
 
             Punkt_t = (ret_asset1_t, ret_asset2_t, ..., ret_assetN_t)
-
-        Beispiel mit 3 Assets bei Timestamp 12:05:
-            Punkt = (AAVE_ret=+0.22%, BTC_ret=+0.08%, ETH_ret=+0.15%)
-
-        Diese Darstellung entspricht exakt der Definition aus dem PDF:
-        "Each day gives us a point in n-dimensional space (the returns of all
-        assets that day). Over w days we obtain w points." Zeitstempel, die
-        nicht lückenlos für alle Assets vorhanden sind, werden entfernt, damit
-        jeder Punkt vollständig n-dimensional ist.
 
         Physikalische Bedeutung der Nähe zweier Punkte:
         Zwei Zeitschritte liegen nah beieinander, wenn alle Assets in beiden

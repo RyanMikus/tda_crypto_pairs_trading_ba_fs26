@@ -265,18 +265,17 @@ def plot_dendrogram(distance_matrix, asset_symbols, color_threshold=None, figsiz
 
 
 def plot_h0_persistence_barcode(distance_matrix, asset_symbols):
-    """H0-Persistenz-Barcode: ein Balken pro Cluster-Merge-Event von birth bis death=epsilon.
+    """Cluster-Lebensdauer-Barcode: ein Balken pro Cluster von birth bis death=epsilon.
 
-    Baut auf demselben single-linkage Dendrogramm wie im PDF-Beispiel auf
-    (scipy.cluster.hierarchy.linkage(method='single')). Jede Zeile der linkage-Matrix
-    ist ein Merge-Event: zwei Cluster verschmelzen bei epsilon=dist zu einem neuen,
-    groesseren Cluster. Für H0 sind alle Features bei epsilon=0 geboren; death=dist
-    ist die Merge-Hoehe. Balkenlaenge = Persistenz = wie lange die Cluster-Struktur
-    vor diesem Merge unveraendert bestand, bevor sie in einen groesseren Cluster
-    aufging. Ein langer Balken ganz oben (letzter Merge) ist typischerweise die
-    "Rest-Rausch"-Verschmelzung (der grosse Rest verschmilzt mit einem Ausreisser);
-    lange Balken mit vielen beteiligten Assets weiter unten sind die eigentlich
-    interessanten, strukturell stabilen Cliquen.
+    Jede Zeile der linkage-Matrix ist ein Merge-Event: zwei Cluster verschmelzen bei
+    epsilon=dist zu einem neuen, groesseren Cluster. Dieser neue Cluster wird an genau
+    dieser Distanz "geboren" (birth=dist des Merges, der ihn erzeugt hat) und "stirbt"
+    wieder, wenn er seinerseits mit einem anderen Cluster verschmilzt (death=dist des
+    naechsten Merges, an dem er beteiligt ist). Die urspruenglichen Einzel-Assets (die
+    Blaetter des Baums) existieren dagegen von Anfang an, ihr birth ist daher 0.
+    Balkenlaenge = Persistenz = wie lange dieser konkrete Cluster als eigenstaendige
+    Einheit bestand, bevor er in einen groesseren Cluster aufging. Lange Balken mit
+    vielen beteiligten Assets sind die strukturell stabilen, interessanten Cliquen.
 
     Args:
         distance_matrix: (n_assets, n_assets) symmetrische Korrelationsdistanzmatrix.
@@ -288,14 +287,27 @@ def plot_h0_persistence_barcode(distance_matrix, asset_symbols):
 
     z = linkage(squareform(distance_matrix, checks=False), method="single")
 
+    # Fuer jeden Cluster (0..n-1 = urspruengliche Assets, n.. = durch Merges
+    # entstandene Cluster) merken wir uns Asset-Mitglieder UND birth-Distanz.
+    # Die Original-Assets existieren von Anfang an -> birth = 0.0.
     members = {i: [asset_symbols[i]] for i in range(n)}
+    birth = {i: 0.0 for i in range(n)}
+
     rows = []
     for row_idx, (c1, c2, dist, _count) in enumerate(z):
         c1, c2 = int(c1), int(c2)
         merged = members[c1] + members[c2]
         cluster_id = n + row_idx
         members[cluster_id] = merged
-        rows.append({"death": float(dist), "size": len(merged), "assets": merged, "row": row_idx})
+        birth[cluster_id] = float(dist)
+
+        # c1 und c2 sterben genau jetzt (sie verschmelzen zu cluster_id) -> ihr
+        # eigener Lebensdauer-Balken laeuft von ihrem eigenen birth bis hier.
+        for c in (c1, c2):
+            rows.append({
+                "birth": birth[c], "death": float(dist),
+                "size": len(members[c]), "assets": members[c], "row": row_idx,
+            })
 
     rows.sort(key=lambda r: r["death"])
 
@@ -304,11 +316,11 @@ def plot_h0_persistence_barcode(distance_matrix, asset_symbols):
     for y, r in enumerate(rows):
         color = _CATEGORICAL[min(r["size"] - 2, len(_CATEGORICAL) - 1)] if r["size"] >= 2 else _SINGLETON_GREY
         fig.add_trace(go.Scatter(
-            x=[0.0, r["death"]], y=[y, y], mode="lines",
+            x=[r["birth"], r["death"]], y=[y, y], mode="lines",
             line=dict(width=8, color=color),
             hovertemplate=(
-                f"Birth: 0.0000<br>Death: {r['death']:.4f}<br>"
-                f"Persistenz: {r['death']:.4f}<br>Groesse: {r['size']} Assets<br>"
+                f"Birth: {r['birth']:.4f}<br>Death: {r['death']:.4f}<br>"
+                f"Persistenz: {r['death'] - r['birth']:.4f}<br>Groesse: {r['size']} Assets<br>"
                 f"Assets: {', '.join(r['assets'][:12])}{'...' if len(r['assets']) > 12 else ''}"
                 "<extra></extra>"
             ),
@@ -316,12 +328,13 @@ def plot_h0_persistence_barcode(distance_matrix, asset_symbols):
         ))
 
     fig.update_layout(
-        title=f"H0-Persistenz-Barcode ({len(rows)} Merge-Events, birth=0 fuer alle)",
+        title=f"Cluster-Lebensdauer-Barcode ({len(rows)} Cluster-Intervalle)",
         xaxis=dict(title="Korrelationsdistanz (epsilon)", range=[0, bound * 1.05]),
-        yaxis=dict(title="Merge-Event (chronologisch nach epsilon)", showticklabels=False),
+        yaxis=dict(title="Cluster-Intervall (sortiert nach Todeszeitpunkt)", showticklabels=False),
         height=max(400, 18 * len(rows)),
         margin=dict(l=40, r=20, t=50, b=40),
         plot_bgcolor="#fcfcfb",
     )
     fig.show()
+    print(f"Anzahl Cluster-Intervalle: {len(rows)}")    
     return z
