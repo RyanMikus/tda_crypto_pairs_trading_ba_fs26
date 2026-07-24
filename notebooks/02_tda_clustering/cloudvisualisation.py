@@ -1,9 +1,10 @@
 import ipywidgets as widgets
+import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
-from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
 from scipy.spatial.distance import squareform
 from sklearn.manifold import MDS
 import math
@@ -171,6 +172,7 @@ def plot_vietoris_rips_epsilon_slider(distance_matrix, asset_symbols, max_edge_l
                 color_map[lbl] = _SINGLETON_GREY
         node_colors = [color_map[lbl] for lbl in labels]
 
+        
         edge_x, edge_y = [], []
         for i in range(n):
             for j in range(i + 1, n):
@@ -217,8 +219,53 @@ def plot_vietoris_rips_epsilon_slider(distance_matrix, asset_symbols, max_edge_l
     )
 
 
+def plot_dendrogram(distance_matrix, asset_symbols, color_threshold=None, figsize=None):
+    """Single-Linkage-Dendrogramm der Assets, optional mit Schwellenlinie.
+
+    Baut den Cluster-Baum aus der Korrelationsdistanzmatrix auf: jedes Asset
+    startet als eigenes Blatt, Verschmelzungen erfolgen entlang der y-Achse
+    (Korrelationsdistanz). Ein niedriger Merge-Punkt bedeutet, dass zwei
+    Assets/Cliquen bereits bei kleiner Distanz zusammengehoeren, ein hoher
+    Merge-Punkt zeigt eine spaete, schwaechere Verbindung.
+
+    Args:
+        distance_matrix: (n_assets, n_assets) symmetrische Korrelationsdistanzmatrix.
+        asset_symbols: Liste der Asset-Symbole, Reihenfolge passend zu distance_matrix.
+        color_threshold: Falls gesetzt, wird bei dieser Distanz eine horizontale
+            Schwellenlinie eingezeichnet und Aeste unterhalb der Schwelle farbig
+            (statt grau) dargestellt, analog zu scipy's eigenem color_threshold.
+        figsize: Optionale (Breite, Hoehe) in Zoll. Default skaliert mit der Anzahl Assets.
+    """
+    n = len(asset_symbols)
+    if distance_matrix.shape != (n, n):
+        raise ValueError(f"distance_matrix hat Shape {distance_matrix.shape}, erwartet ({n}, {n}).")
+
+    z = linkage(squareform(distance_matrix, checks=False), method="single")
+
+    if figsize is None:
+        figsize = (max(10, n * 0.35), 6)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    dendrogram(
+        z, labels=asset_symbols, ax=ax,
+        color_threshold=color_threshold,
+        above_threshold_color=_INK_MUTED,
+    )
+    if color_threshold is not None:
+        ax.axhline(y=color_threshold, color=_CATEGORICAL[7], linestyle="--", linewidth=1.2,
+                   label=f"Merge Scale epsilon* = {color_threshold:.4f}")
+        ax.legend()
+
+    ax.set_ylabel("Korrelationsdistanz (epsilon)")
+    ax.set_title(f"Single-Linkage-Dendrogramm ({n} Assets)")
+    plt.xticks(rotation=90, fontsize=8)
+    plt.tight_layout()
+    plt.show()
+    return z
+
+
 def plot_h0_persistence_barcode(distance_matrix, asset_symbols):
-    """H0-Persistenz-Barcode: ein Balken pro Cluster-Merge-Event von birth=0 bis death=epsilon.
+    """H0-Persistenz-Barcode: ein Balken pro Cluster-Merge-Event von birth bis death=epsilon.
 
     Baut auf demselben single-linkage Dendrogramm wie im PDF-Beispiel auf
     (scipy.cluster.hierarchy.linkage(method='single')). Jede Zeile der linkage-Matrix
@@ -241,7 +288,6 @@ def plot_h0_persistence_barcode(distance_matrix, asset_symbols):
 
     z = linkage(squareform(distance_matrix, checks=False), method="single")
 
-    # Fuer jeden Merge die urspruenglichen Asset-Mitglieder auflösen (fuer Hover-Text).
     members = {i: [asset_symbols[i]] for i in range(n)}
     rows = []
     for row_idx, (c1, c2, dist, _count) in enumerate(z):
