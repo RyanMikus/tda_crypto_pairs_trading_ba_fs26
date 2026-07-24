@@ -25,9 +25,6 @@ matplotlib==3.8.*
 # ── Visualisierung ──
 plotly>=5.15
 
-# ── Crypto-Börsen ──
-ccxt>=4.0
-
 # ── Graphen ──
 igraph
 

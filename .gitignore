@@ -11,6 +11,7 @@ env/
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # Notebook cache
 .ipynb_checkpoints/
@@ -22,3 +23,6 @@ env/
 *.log
 
 secret.cfg
+
+# Raw API response cache (dev-time, resumable fetch checkpoints)
+data/raw/cache/
