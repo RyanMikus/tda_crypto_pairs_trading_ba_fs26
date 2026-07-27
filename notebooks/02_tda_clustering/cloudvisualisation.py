@@ -7,11 +7,21 @@ from plotly.subplots import make_subplots
 from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
 from scipy.spatial.distance import squareform
 from sklearn.manifold import MDS
+from IPython.display import display, clear_output
 import math
 
-# Default-Renderer "browser" öffnet einen System-Browser-Prozess und blockiert/crasht
-# den Kernel bei headless nbconvert-Ausführung -> stattdessen inline im Notebook rendern.
-if pio.renderers.default == "browser":
+# Manche Umgebungen (z.B. VS Code) erkennen den Default automatisch als
+# zusammengesetzten, "+"-getrennten Wert (z.B. "vscode+notebook"). In dem Fall
+# rendert jeder fig.show()-Aufruf einmal PRO Renderer in der Liste -> dieselbe
+# Figur erscheint mehrfach, auch ohne jede Interaktion. Nur den ersten Eintrag
+# behalten (die von Plotly selbst erkannte, zur Umgebung passende Wahl), statt
+# ihn durch einen fest einprogrammierten Renderer zu ersetzen, der in dieser
+# Umgebung evtl. gar nicht unterstuetzt wird (-> leerer Output).
+if "+" in pio.renderers.default:
+    pio.renderers.default = pio.renderers.default.split("+")[0]
+# "browser" oeffnet einen System-Browser-Prozess und blockiert/crasht den Kernel
+# bei headless nbconvert-Ausfuehrung -> stattdessen inline im Notebook rendern.
+elif pio.renderers.default == "browser":
     pio.renderers.default = "notebook"
 
 # Referenzpalette (siehe dataviz-Skill): diverging blue<->red, neutraler Grau-Mittelpunkt.
@@ -81,7 +91,17 @@ def plot_point_cloud_3d_interactive(point_cloud, asset_symbols, timestamps=None,
     if timestamps is not None:
         hover_ts = [str(t) for t in timestamps]
 
-    def render(x_asset, y_asset, z_asset):
+    default_x = asset_symbols[0]
+    default_y = asset_symbols[1] if n_dims > 1 else asset_symbols[0]
+    default_z = asset_symbols[2] if n_dims > 2 else asset_symbols[0]
+
+    x_dropdown = widgets.Dropdown(options=asset_symbols, value=default_x, description="X-Achse:")
+    y_dropdown = widgets.Dropdown(options=asset_symbols, value=default_y, description="Y-Achse:")
+    z_dropdown = widgets.Dropdown(options=asset_symbols, value=default_z, description="Z-Achse:")
+    out = widgets.Output()
+
+    def render(*_change):
+        x_asset, y_asset, z_asset = x_dropdown.value, y_dropdown.value, z_dropdown.value
         xi, yi, zi = asset_symbols.index(x_asset), asset_symbols.index(y_asset), asset_symbols.index(z_asset)
         x, y, z = point_cloud[:, xi], point_cloud[:, yi], point_cloud[:, zi]
 
@@ -117,18 +137,19 @@ def plot_point_cloud_3d_interactive(point_cloud, asset_symbols, timestamps=None,
             height=700,
             margin=dict(l=0, r=0, b=0, t=40),
         )
-        fig.show()
+        # Eigener Output + explizites clear_output(wait=True) VOR jedem neuen Plot:
+        # go.Figure().show() allein ersetzt die vorherige Ausgabe nicht zuverlaessig
+        # innerhalb von widgets.interact (Plotly+ipywidgets in VS Code) -> ohne das
+        # haengt sich bei jedem Dropdown-Wechsel eine weitere Figur an die Zelle an.
+        with out:
+            clear_output(wait=True)
+            fig.show()
 
-    default_x = asset_symbols[0]
-    default_y = asset_symbols[1] if n_dims > 1 else asset_symbols[0]
-    default_z = asset_symbols[2] if n_dims > 2 else asset_symbols[0]
+    for dropdown in (x_dropdown, y_dropdown, z_dropdown):
+        dropdown.observe(render, names="value")
 
-    widgets.interact(
-        render,
-        x_asset=widgets.Dropdown(options=asset_symbols, value=default_x, description="X-Achse:"),
-        y_asset=widgets.Dropdown(options=asset_symbols, value=default_y, description="Y-Achse:"),
-        z_asset=widgets.Dropdown(options=asset_symbols, value=default_z, description="Z-Achse:"),
-    )
+    display(widgets.VBox([widgets.HBox([x_dropdown, y_dropdown, z_dropdown]), out]))
+    render()
 
 
 def plot_vietoris_rips_epsilon_slider(distance_matrix, asset_symbols, max_edge_length=None, min_cluster_size=2):
@@ -158,7 +179,16 @@ def plot_vietoris_rips_epsilon_slider(distance_matrix, asset_symbols, max_edge_l
     coords = MDS(n_components=2, dissimilarity="precomputed", random_state=0, normalized_stress=False).fit_transform(distance_matrix)
     z = linkage(squareform(distance_matrix, checks=False), method="single")
 
-    def render(epsilon):
+    slider = widgets.FloatSlider(
+        min=0.0, max=eps_max, step=eps_max / 200,
+        value=0.0, description="epsilon:", continuous_update=False,
+        readout_format=".4f", style={"description_width": "initial"},
+        layout=widgets.Layout(width="600px"),
+    )
+    out = widgets.Output()
+
+    def render(*_change):
+        epsilon = slider.value
         labels = fcluster(z, t=epsilon, criterion="distance")
         sizes = {lbl: int(np.sum(labels == lbl)) for lbl in set(labels)}
 
@@ -206,17 +236,17 @@ def plot_vietoris_rips_epsilon_slider(distance_matrix, asset_symbols, max_edge_l
             height=650, margin=dict(l=10, r=10, t=50, b=10),
             plot_bgcolor="#fcfcfb",
         )
-        fig.show()
+        # Eigener Output + explizites clear_output(wait=True) VOR jedem neuen Plot:
+        # go.Figure().show() allein ersetzt die vorherige Ausgabe nicht zuverlaessig
+        # innerhalb von widgets.interact -> ohne das haengt sich bei jedem Schritt
+        # des Sliders eine weitere Figur an die Zelle an, statt sie zu ersetzen.
+        with out:
+            clear_output(wait=True)
+            fig.show()
 
-    widgets.interact(
-        render,
-        epsilon=widgets.FloatSlider(
-            min=0.0, max=eps_max, step=eps_max / 200,
-            value=0.0, description="epsilon:", continuous_update=False,
-            readout_format=".4f", style={"description_width": "initial"},
-            layout=widgets.Layout(width="600px"),
-        ),
-    )
+    slider.observe(render, names="value")
+    display(widgets.VBox([slider, out]))
+    render()
 
 
 def plot_dendrogram(distance_matrix, asset_symbols, color_threshold=None, figsize=None):
