@@ -57,9 +57,6 @@ class HelperFunctions:
             numpy Array. Die Diagonale ist 0.
         """
         corr = np.corrcoef(returns_window.to_numpy().T)
-        print(f"Korrelationsmatrix: {corr.shape[0]} Assets, {corr.shape[1]} Assets")
-        print(f"Korrelationsmatrix: min={np.nanmin(corr):.4f}, max={np.nanmax(corr):.4f}, mean={np.nanmean(corr):.4f}")
-        print(f"gesamte corr: {corr}")
         corr = np.nan_to_num(corr, nan=0.0)
         corr = np.clip(corr, -1.0, 1.0)
         dist = np.sqrt(np.maximum(0.0, 2.0 * (1.0 - corr)))
@@ -407,5 +404,353 @@ class HelperFunctions:
         clusters = [members for members in groups.values() if len(members) >= min_cluster_size]
         clusters = sorted(clusters, key=lambda x: (-len(x), x))
         return clusters
+
+    @staticmethod
+    def residualize_returns(
+        returns_df: pd.DataFrame,
+        *,
+        factor_columns: list[str],
+    ) -> pd.DataFrame:
+        """Entfernt den linearen Einfluss von Faktor-Assets aus jeder anderen Spalte.
+
+        Regressiert jede Spalte von returns_df (ausser factor_columns) einzeln per
+        OLS (mit Intercept) auf die factor_columns und gibt die Residuen zurueck.
+        Mit einer Faktor-Spalte (z.B. nur "BTC") ist das eine einfache lineare
+        Regression; mit mehreren (z.B. "BTC" und "ETH") eine multiple Regression.
+        Die Faktor-Spalten selbst werden aus dem Ergebnis entfernt, da ihr eigenes
+        Residuum gegen sich selbst degenerate (~0) waere.
+
+        Args:
+            returns_df: DataFrame (n_timestamps, n_assets), z.B. Return-Matrix aus
+                einer Point Cloud. Muss alle in factor_columns genannten Spalten
+                enthalten.
+            factor_columns: Spaltennamen, die als Regressoren (Markt-/Faktor-
+                Renditen) verwendet werden, z.B. ["BTC"] oder ["BTC", "ETH"].
+
+        Returns:
+            DataFrame mit demselben Index wie returns_df und einer Spalte pro
+            Nicht-Faktor-Asset aus returns_df; Werte sind die Regressions-Residuen
+            (der Teil der Rendite, der nicht durch die Faktoren erklaert wird).
+
+        Raises:
+            KeyError: falls eine factor_column nicht in returns_df vorkommt.
+        """
+        missing_columns = [c for c in factor_columns if c not in returns_df.columns]
+        if missing_columns:
+            raise KeyError(f"Faktor-Spalten nicht in returns_df gefunden: {missing_columns}")
+
+        factors = returns_df[factor_columns].to_numpy()
+        design = np.column_stack([np.ones(len(factors)), factors])
+
+        residuals = {}
+        for column in returns_df.columns:
+            if column in factor_columns:
+                continue
+            y = returns_df[column].to_numpy()
+            beta, _, _, _ = np.linalg.lstsq(design, y, rcond=None)
+            residuals[column] = y - design @ beta
+
+        return pd.DataFrame(residuals, index=returns_df.index)
+
+    @staticmethod
+    def compute_rolling_volume_table(
+        asset_daily_df: pd.DataFrame,
+        *,
+        id_column: str,
+        date_column: str,
+        volume_column: str,
+        lookback_days: int,
+    ) -> pd.DataFrame:
+        """Berechnet den rollierenden Median-Volumen pro Asset ueber lookback_days.
+
+        Gedacht als Glaettung des taeglichen 24h-USD-Volumens, um einzelne
+        Volumen-Spitzen (die sonst ein Asset kurzzeitig in einen anderen
+        Basket springen liessen) auszugleichen. asset_daily_df enthaelt pro
+        Asset nur Zeilen fuer Tage, an denen es die Basis-Volumenschwelle
+        (siehe 01_assets.ipynb Filter 2) bereits erfuellt hat -- diese Funktion
+        selbst nimmt keine weitere Filterung vor.
+
+        Args:
+            asset_daily_df: DataFrame mit mindestens id_column, date_column,
+                volume_column.
+            id_column: Spaltenname der Asset-ID.
+            date_column: Spaltenname des Datums.
+            volume_column: Spaltenname des taeglichen USD-Volumens.
+            lookback_days: Fenstergroesse (und min_periods) fuer den
+                rollierenden Median.
+
+        Returns:
+            Kopie der drei genannten Spalten, sortiert nach
+            (id_column, date_column), mit zwei neuen Spalten:
+                - rolling_median_volume_24h_usd
+                - log_rolling_median_volume_24h_usd (log10, NaN wenn <= 0)
+        """
+        volume_df = asset_daily_df[[id_column, date_column, volume_column]].copy()
+        volume_df[date_column] = pd.to_datetime(volume_df[date_column])
+        volume_df = volume_df.sort_values([id_column, date_column])
+
+        volume_df["rolling_median_volume_24h_usd"] = (
+            volume_df
+            .groupby(id_column)[volume_column]
+            .transform(
+                lambda series: series
+                .rolling(lookback_days, min_periods=lookback_days)
+                .median()
+            )
+        )
+
+        volume_df["log_rolling_median_volume_24h_usd"] = np.log10(
+            volume_df["rolling_median_volume_24h_usd"].where(
+                volume_df["rolling_median_volume_24h_usd"] > 0
+            )
+        )
+
+        return volume_df
+
+    @staticmethod
+    def assign_volume_basket(
+        volume: float,
+        *,
+        basket_upper_bounds: list[float],
+    ) -> str | None:
+        """Ordnet einen Volumenwert einem von N Baskets zu.
+
+        basket_upper_bounds ist eine aufsteigend sortierte Liste von N-1
+        Obergrenzen fuer einen N-Basket-Split -- die Anzahl Baskets und ihre
+        Grenzen sind damit frei waehlbar, nicht auf 4 fest verdrahtet.
+        "Basket 1" ist immer der oberste (liquideste) Basket ohne Obergrenze,
+        "Basket N" der unterste (gerade noch die Eingangsschwelle erfuellend).
+        Fuer einen 2-Basket-Split reicht eine einzelne Grenze, z.B.
+        basket_upper_bounds=[250_000_000].
+
+        Args:
+            volume: Volumenwert (z.B. rolling_median_volume_24h_usd). NaN
+                (z.B. zu wenig Historie fuer den rollierenden Median) ergibt
+                keinen Basket.
+            basket_upper_bounds: Aufsteigend sortierte Liste von N-1
+                Volumen-Obergrenzen.
+
+        Returns:
+            "Basket {n}" mit n von 1 (hoechstes Volumen) bis N (niedrigstes),
+            oder None wenn volume NaN ist.
+        """
+        if pd.isna(volume):
+            return None
+
+        n_baskets = len(basket_upper_bounds) + 1
+        for index, upper_bound in enumerate(basket_upper_bounds):
+            if volume < upper_bound:
+                return f"Basket {n_baskets - index}"
+
+        return "Basket 1"
+
+    @staticmethod
+    def build_volume_baskets(
+        rolling_volume_df: pd.DataFrame,
+        selected_date,
+        *,
+        id_column: str,
+        date_column: str,
+        basket_upper_bounds: list[float],
+    ) -> pd.DataFrame:
+        """Baut die Basket-Zuordnung fuer alle Assets an einem bestimmten Datum.
+
+        Args:
+            rolling_volume_df: Ausgabe von compute_rolling_volume_table, muss
+                eine Spalte "rolling_median_volume_24h_usd" enthalten.
+            selected_date: Datum, fuer das die Baskets gebaut werden.
+            id_column: Spaltenname der Asset-ID.
+            date_column: Spaltenname des Datums.
+            basket_upper_bounds: siehe assign_volume_basket.
+
+        Returns:
+            Zeilen von rolling_volume_df fuer selected_date mit neuer Spalte
+            "basket", absteigend nach rolling_median_volume_24h_usd sortiert.
+            Assets ohne Basket (NaN-Volumen) werden entfernt.
+        """
+        selected_date = pd.Timestamp(selected_date)
+
+        basket_df = rolling_volume_df.loc[
+            rolling_volume_df[date_column] == selected_date
+        ].copy()
+
+        basket_df["basket"] = basket_df["rolling_median_volume_24h_usd"].apply(
+            lambda volume: HelperFunctions.assign_volume_basket(
+                volume,
+                basket_upper_bounds=basket_upper_bounds,
+            )
+        )
+
+        basket_df = (
+            basket_df
+            .loc[basket_df["basket"].notna()]
+            .sort_values("rolling_median_volume_24h_usd", ascending=False)
+            .reset_index(drop=True)
+        )
+
+        return basket_df
+
+    @staticmethod
+    def compare_baskets(
+        previous_basket_df: pd.DataFrame,
+        current_basket_df: pd.DataFrame,
+        *,
+        id_column: str,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Vergleicht Basket-Zuordnungen zweier Daten (siehe build_volume_baskets).
+
+        Args:
+            previous_basket_df: Basket-Zuordnung des frueheren Datums.
+            current_basket_df: Basket-Zuordnung des aktuellen Datums.
+            id_column: Spaltenname der Asset-ID.
+
+        Returns:
+            (comparison_df, left_df, transition_df):
+                - comparison_df: current_basket_df + previous_basket +
+                  basket_change ("entered universe" | "switched basket" |
+                  "unchanged").
+                - left_df: Assets, die im aktuellen Basket-Set nicht mehr
+                  vorkommen ("left universe").
+                - transition_df: Kreuztabelle previous_basket x basket.
+        """
+        previous_basket_map = previous_basket_df.set_index(id_column)["basket"]
+
+        comparison_df = current_basket_df.copy()
+        comparison_df["previous_basket"] = comparison_df[id_column].map(
+            previous_basket_map
+        )
+
+        comparison_df["basket_change"] = np.select(
+            [
+                comparison_df["previous_basket"].isna(),
+                comparison_df["previous_basket"].astype(str)
+                != comparison_df["basket"].astype(str),
+            ],
+            [
+                "entered universe",
+                "switched basket",
+            ],
+            default="unchanged",
+        )
+
+        previous_assets = set(previous_basket_df[id_column])
+        current_assets = set(current_basket_df[id_column])
+        left_assets = previous_assets - current_assets
+
+        left_df = (
+            previous_basket_df
+            .loc[
+                previous_basket_df[id_column].isin(left_assets),
+                [
+                    id_column,
+                    "basket",
+                    "rolling_median_volume_24h_usd",
+                ],
+            ]
+            .rename(columns={"basket": "previous_basket"})
+            .copy()
+        )
+
+        left_df["basket_change"] = "left universe"
+
+        transition_df = (
+            comparison_df
+            .loc[comparison_df["previous_basket"].notna()]
+            .groupby(["previous_basket", "basket"], observed=True)
+            .size()
+            .rename("asset_count")
+            .reset_index()
+            .pivot(index="previous_basket", columns="basket", values="asset_count")
+            .fillna(0)
+            .astype(int)
+        )
+
+        return comparison_df, left_df, transition_df
+
+    @staticmethod
+    def build_basket_comparison(
+        rolling_volume_df: pd.DataFrame,
+        *,
+        previous_date,
+        selected_date,
+        id_column: str,
+        date_column: str,
+        basket_upper_bounds: list[float],
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Baut Basket-Zuordnungen fuer zwei Daten und vergleicht sie.
+
+        Args:
+            rolling_volume_df: siehe build_volume_baskets.
+            previous_date: frueheres Vergleichsdatum.
+            selected_date: aktuelles Datum.
+            id_column: Spaltenname der Asset-ID.
+            date_column: Spaltenname des Datums.
+            basket_upper_bounds: siehe assign_volume_basket.
+
+        Returns:
+            (previous_basket_df, current_basket_df, comparison_df, left_df,
+            transition_df) -- siehe build_volume_baskets/compare_baskets.
+        """
+        previous_basket_df = HelperFunctions.build_volume_baskets(
+            rolling_volume_df,
+            previous_date,
+            id_column=id_column,
+            date_column=date_column,
+            basket_upper_bounds=basket_upper_bounds,
+        )
+
+        current_basket_df = HelperFunctions.build_volume_baskets(
+            rolling_volume_df,
+            selected_date,
+            id_column=id_column,
+            date_column=date_column,
+            basket_upper_bounds=basket_upper_bounds,
+        )
+
+        comparison_df, left_df, transition_df = HelperFunctions.compare_baskets(
+            previous_basket_df,
+            current_basket_df,
+            id_column=id_column,
+        )
+
+        return (
+            previous_basket_df,
+            current_basket_df,
+            comparison_df,
+            left_df,
+            transition_df,
+        )
+
+    @staticmethod
+    def describe_volume_baskets(
+        basket_upper_bounds: list[float],
+        min_volume_24h_usd: float,
+    ) -> list[str]:
+        """Baut lesbare Basket-Definitionen fuer eine gegebene Schwellenliste.
+
+        Args:
+            basket_upper_bounds: siehe assign_volume_basket.
+            min_volume_24h_usd: absolute Eingangsschwelle (unteres Ende von
+                Basket N).
+
+        Returns:
+            Liste von Strings, einer pro Basket, von "Basket 1" (oben) bis
+            "Basket N" (unten), z.B.
+            "Basket 2: $100,000,000 <= volume < $250,000,000".
+        """
+        n_baskets = len(basket_upper_bounds) + 1
+        bounds = [min_volume_24h_usd] + list(basket_upper_bounds) + [None]
+
+        lines = []
+        for index in range(n_baskets):
+            label = f"Basket {n_baskets - index}"
+            lower = bounds[index]
+            upper = bounds[index + 1]
+            if upper is None:
+                lines.append(f"{label}: volume >= ${lower:,.0f}")
+            else:
+                lines.append(f"{label}: ${lower:,.0f} <= volume < ${upper:,.0f}")
+
+        return lines
 
         
