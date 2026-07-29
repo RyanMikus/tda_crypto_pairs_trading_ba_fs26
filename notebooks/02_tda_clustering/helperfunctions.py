@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
+from sklearn.decomposition import PCA
 import warnings
 from pathlib import Path
 
@@ -446,6 +447,46 @@ class HelperFunctions:
         for column in returns_df.columns:
             if column in factor_columns:
                 continue
+            y = returns_df[column].to_numpy()
+            beta, _, _, _ = np.linalg.lstsq(design, y, rcond=None)
+            residuals[column] = y - design @ beta
+
+        return pd.DataFrame(residuals, index=returns_df.index)
+
+    @staticmethod
+    def residualize_against_pca(
+        returns_df: pd.DataFrame,
+        *,
+        n_components: int = 1,
+    ) -> pd.DataFrame:
+        """Entfernt den Einfluss der ersten n_components Hauptkomponenten aus jeder Spalte.
+
+        Statt gegen ein benanntes Faktor-Asset (siehe residualize_returns) wird
+        hier ein synthetischer Markt-Faktor per PCA aus returns_df selbst
+        extrahiert: die ersten n_components Hauptkomponenten-Scores dienen als
+        Regressoren fuer eine OLS-Regression (mit Intercept) jeder einzelnen
+        Spalte, analog zu residualize_returns. Nuetzlich, wenn kein einzelnes
+        Asset (z.B. BTC) als Marktfaktor unterstellt werden soll, sondern die
+        dominante gemeinsame Bewegungsrichtung des gesamten Fensters.
+
+        Args:
+            returns_df: DataFrame (n_timestamps, n_assets), z.B. Return-Matrix aus
+                einer Point Cloud.
+            n_components: Anzahl Hauptkomponenten, die als Faktoren verwendet
+                werden (Standard: 1 = nur die erste/dominante Komponente).
+
+        Returns:
+            DataFrame mit demselben Index und denselben Spalten wie returns_df;
+            Werte sind die Regressions-Residuen (der Teil der Rendite, der nicht
+            durch die ersten n_components Hauptkomponenten erklaert wird).
+        """
+        components = PCA(n_components=n_components, random_state=0).fit_transform(
+            returns_df.to_numpy()
+        )
+        design = np.column_stack([np.ones(len(components)), components])
+
+        residuals = {}
+        for column in returns_df.columns:
             y = returns_df[column].to_numpy()
             beta, _, _, _ = np.linalg.lstsq(design, y, rcond=None)
             residuals[column] = y - design @ beta

@@ -47,3 +47,6 @@ pyarrow
 
 # ── Hilfspakete ──
 tqdm
+
+# ── Dashboard ──
+customtkinter

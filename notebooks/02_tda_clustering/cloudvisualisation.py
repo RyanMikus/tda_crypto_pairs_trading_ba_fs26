@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
+from matplotlib.colors import LinearSegmentedColormap
 from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
 from scipy.spatial.distance import squareform
 from sklearn.manifold import MDS
@@ -34,6 +35,11 @@ _DIVERGING_SCALE = [
     [1.0, "#7a1f1f"],
 ]
 _MARKER_COLOR = "#2a78d6"
+# Matplotlib-Aequivalent von _DIVERGING_SCALE (gleiche Stops, gleichmaessig verteilt
+# bei 0/0.25/0.5/0.75/1.0) fuer Heatmaps ausserhalb von Plotly.
+_DIVERGING_CMAP = LinearSegmentedColormap.from_list(
+    "diverging_blue_red", [stop[1] for stop in _DIVERGING_SCALE]
+)
 
 # Kategoriale Referenzpalette (dataviz-Skill), feste Reihenfolge, nie zyklisch neu
 # zugewiesen. Slot 0 ist reserviert fuer "noch nicht verschmolzen / Singleton" (grau).
@@ -249,8 +255,104 @@ def plot_vietoris_rips_epsilon_slider(distance_matrix, asset_symbols, max_edge_l
     render()
 
 
-def plot_dendrogram(distance_matrix, asset_symbols, color_threshold=None, figsize=None):
-    """Single-Linkage-Dendrogramm der Assets, optional mit Schwellenlinie.
+def plot_correlation_heatmap(
+    matrix, asset_symbols, *,
+    value_range=(-1.0, 1.0),
+    cmap=None,
+    colorbar_label="Korrelation",
+    title=None,
+    annotate=True,
+    annotate_fmt="{:.2f}",
+    annotate_fontsize=None,
+    max_annotated_assets=30,
+    figsize=None,
+    ax=None,
+    show=True,
+):
+    """Heatmap einer (n_assets, n_assets) Matrix mit optionalen Zahlen pro Zelle.
+
+    Generische Heatmap-Funktion fuer sowohl die Korrelationsmatrix (Werte in
+    [-1, 1], diverging Farbskala zentriert auf 0, Default) als auch die
+    Korrelationsdistanzmatrix (Werte in [0, sqrt(2)] -- dafuer value_range und
+    cmap explizit uebergeben) -- ersetzt die zuvor in 03_pointclouds.ipynb /
+    04_residual_pointclouds.ipynb duplizierten ad-hoc imshow-Bloecke ohne
+    Zahlen-Annotation.
+
+    Args:
+        matrix: (n_assets, n_assets) symmetrische Matrix.
+        asset_symbols: Liste der Asset-Symbole, Reihenfolge passend zu matrix.
+        value_range: (vmin, vmax) fuer die Farbskala. Default (-1, 1) fuer
+            Korrelationen; fuer Distanzen z.B. (0, sqrt(2)) uebergeben.
+        cmap: Matplotlib-Colormap oder Name. Default: diverging blue<->red
+            (siehe _DIVERGING_SCALE), passend fuer um 0 zentrierte Werte.
+        colorbar_label: Beschriftung der Farbskala.
+        title: Optionaler Titel. Default generisch mit Asset-Anzahl.
+        annotate: Falls True, wird jede Zelle mit ihrem Wert beschriftet.
+            Wird automatisch deaktiviert, wenn mehr als max_annotated_assets
+            Assets vorhanden sind (sonst unleserlich).
+        annotate_fmt: Format-String fuer die Zellen-Beschriftung.
+        annotate_fontsize: Schriftgroesse der Zellen-Beschriftung. Default (None)
+            skaliert automatisch mit der Asset-Anzahl (kleinere Schrift bei
+            mehr Assets), damit die Zahlen bei vielen Assets nicht ueberlappen,
+            bei wenigen Assets aber gut lesbar gross bleiben.
+        max_annotated_assets: Schwelle, ab der annotate automatisch False wird.
+        figsize: Optionale (Breite, Hoehe) in Zoll. Ignoriert, falls ax uebergeben wird.
+        ax: Optionale matplotlib Axes zum Zeichnen (z.B. eine in Tkinter
+            eingebettete FigureCanvasTkAgg-Achse). Falls None, wird eine neue
+            Figure erstellt.
+        show: Falls True (Default) und ax None ist, wird plt.show() aufgerufen.
+            Beim Einbetten (ax uebergeben) sollte dies auf False gesetzt werden.
+
+    Returns:
+        (fig, ax): die verwendete Figure und Axes.
+    """
+    n = len(asset_symbols)
+    if matrix.shape != (n, n):
+        raise ValueError(f"matrix hat Shape {matrix.shape}, erwartet ({n}, {n}).")
+
+    if cmap is None:
+        cmap = _DIVERGING_CMAP
+
+    owns_figure = ax is None
+    if owns_figure:
+        if figsize is None:
+            figsize = (max(8, n * 0.35), max(6, n * 0.3))
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    vmin, vmax = value_range
+    im = ax.imshow(matrix, vmin=vmin, vmax=vmax, cmap=cmap, aspect="auto")
+    fig.colorbar(im, ax=ax, label=colorbar_label)
+
+    ax.set_xticks(range(n)); ax.set_xticklabels(asset_symbols, rotation=90, fontsize=7)
+    ax.set_yticks(range(n)); ax.set_yticklabels(asset_symbols, fontsize=7)
+    ax.set_title(title or f"Heatmap ({n} Assets)")
+
+    if annotate and n <= max_annotated_assets:
+        # Skaliert von ~11pt (wenige Assets) bis ~6pt (nahe max_annotated_assets),
+        # damit die Zahlen bei kleinen Matrizen gut lesbar sind und bei grossen
+        # Matrizen trotzdem nicht ueberlappen.
+        fontsize = annotate_fontsize if annotate_fontsize is not None else max(6.0, min(11.0, 220.0 / n))
+        for i in range(n):
+            for j in range(n):
+                value = matrix[i, j]
+                ax.text(j, i, annotate_fmt.format(value), ha="center", va="center",
+                        fontsize=fontsize, color="black")
+
+    if owns_figure:
+        fig.tight_layout()
+        if show:
+            plt.show()
+
+    return fig, ax
+
+
+def plot_dendrogram(
+    distance_matrix, asset_symbols, color_threshold=None, figsize=None,
+    ax=None, show=True, extra_hlines=None, y_max=None,
+):
+    """Single-Linkage-Dendrogramm der Assets, optional mit Schwellenlinie(n).
 
     Baut den Cluster-Baum aus der Korrelationsdistanzmatrix auf: jedes Asset
     startet als eigenes Blatt, Verschmelzungen erfolgen entlang der y-Achse
@@ -265,6 +367,19 @@ def plot_dendrogram(distance_matrix, asset_symbols, color_threshold=None, figsiz
             Schwellenlinie eingezeichnet und Aeste unterhalb der Schwelle farbig
             (statt grau) dargestellt, analog zu scipy's eigenem color_threshold.
         figsize: Optionale (Breite, Hoehe) in Zoll. Default skaliert mit der Anzahl Assets.
+            Ignoriert, falls ax uebergeben wird.
+        ax: Optionale matplotlib Axes zum Zeichnen (z.B. eine in Tkinter eingebettete
+            FigureCanvasTkAgg-Achse). Falls None, wird eine neue Figure erstellt.
+        show: Falls True (Default) und ax None ist, wird plt.show() aufgerufen.
+            Beim Einbetten (ax uebergeben) sollte dies auf False gesetzt werden.
+        extra_hlines: Optionale Liste von (label, value, color)-Tupeln fuer
+            zusaetzliche, rein visuelle Referenzlinien (z.B. sqrt(2) als
+            theoretische "keine Korrelation"-Grenze), unabhaengig vom
+            color_threshold, der weiterhin nur die scipy-Aeste-Faerbung steuert.
+        y_max: Falls gesetzt, wird die y-Achse fest auf [0, y_max] statt auf den
+            per-Fenster-Merge-Bereich skaliert -- damit bleibt die Achse beim
+            Durchblaettern verschiedener Daten/Fenster vergleichbar, statt sich
+            pro Fenster neu anzupassen.
     """
     n = len(asset_symbols)
     if distance_matrix.shape != (n, n):
@@ -272,25 +387,46 @@ def plot_dendrogram(distance_matrix, asset_symbols, color_threshold=None, figsiz
 
     z = linkage(squareform(distance_matrix, checks=False), method="single")
 
-    if figsize is None:
-        figsize = (max(10, n * 0.35), 6)
+    owns_figure = ax is None
+    if owns_figure:
+        if figsize is None:
+            figsize = (max(10, n * 0.35), 6)
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
 
-    fig, ax = plt.subplots(figsize=figsize)
     dendrogram(
         z, labels=asset_symbols, ax=ax,
         color_threshold=color_threshold,
         above_threshold_color=_INK_MUTED,
     )
+
+    has_legend_entries = False
     if color_threshold is not None:
         ax.axhline(y=color_threshold, color=_CATEGORICAL[7], linestyle="--", linewidth=1.2,
                    label=f"Merge Scale epsilon* = {color_threshold:.4f}")
+        has_legend_entries = True
+
+    for label, value, color in extra_hlines or []:
+        ax.axhline(y=value, color=color, linestyle=":", linewidth=1.2,
+                   label=f"{label} ({value:.4f})")
+        has_legend_entries = True
+
+    if has_legend_entries:
         ax.legend()
 
     ax.set_ylabel("Korrelationsdistanz (epsilon)")
     ax.set_title(f"Single-Linkage-Dendrogramm ({n} Assets)")
-    plt.xticks(rotation=90, fontsize=8)
-    plt.tight_layout()
-    plt.show()
+    ax.tick_params(axis="x", labelrotation=90, labelsize=8)
+
+    if y_max is not None:
+        ax.set_ylim(0, y_max)
+
+    if owns_figure:
+        fig.tight_layout()
+        if show:
+            plt.show()
+
     return z
 
 
