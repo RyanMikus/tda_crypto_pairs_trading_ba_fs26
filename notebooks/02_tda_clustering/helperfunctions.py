@@ -407,6 +407,180 @@ class HelperFunctions:
         return clusters
 
     @staticmethod
+    def get_persistent_clusters(
+        dist_matrix: np.ndarray,
+        asset_ids: list[int],
+        persistence_threshold: float,
+        epsilon_cap: float = 1.0,
+        min_cluster_size: int = MIN_CLUSTER_SIZE,
+    ) -> tuple[list[dict], np.ndarray]:
+        """Findet den EINEN persistentesten Cluster (falls einer die Schwelle schafft).
+
+        Entspricht dem PDF-Referenzcode (Abschnitt 5, "Generate trading signal
+        for the latest day"): "For simplicity, take the feature with largest
+        persistence" -- main_feat = max(persistent, key=lambda f: f[2]-f[1]).
+        Statt giottos H0-Diagramm (dessen Spaltenkonvention im PDF-Beispiel
+        vertauscht ist, siehe unten) wird direkt auf dem Single-Linkage-Baum
+        gearbeitet, da Vietoris-Rips-H0 mathematisch aequivalent zu Single-
+        Linkage ist -- man braucht dafuer keine giotto-tda-Abhaengigkeit.
+
+        Fuer JEDEN Knoten (= Merge-Event, plus die urspruenglichen Assets als
+        Blaetter) des Baums gilt: birth = Hoehe seiner eigenen Entstehung
+        (0 fuer ein einzelnes Asset), death = Hoehe, bei der er selbst in
+        einen groesseren Cluster aufgeht -- gedeckelt bei epsilon_cap, falls
+        er dort noch nicht verschmolzen ist ("censored death": empirisch
+        gegen giotto-tda verifiziert -- eine bis max_edge_length nie
+        verschmolzene Komponente bekommt dort ebenfalls death=max_edge_length,
+        nicht unendlich). persistence = death - birth. Die Wurzel (= ganzer
+        Basket als ein Cluster) ist dabei ein ganz normaler Kandidat wie jeder
+        andere Knoten -- keine Sonderrolle, sie gewinnt nur, wenn sie
+        tatsaechlich die hoechste Persistenz im ganzen Baum hat.
+
+        Kandidat ist jeder Knoten mit Groesse >= min_cluster_size (Singletons
+        zaehlen nie mit, da ein einzelnes, lange unverschmolzenes Asset
+        rechnerisch eine hohe, aber bedeutungslose eigene "Persistenz" haben
+        kann) und persistence > persistence_threshold. Von allen Kandidaten
+        gewinnt der mit der hoechsten Persistenz; gibt es keinen Kandidaten,
+        wird eine leere Liste zurueckgegeben.
+
+        Args:
+            dist_matrix: Quadratische, symmetrische Distanzmatrix (n, n).
+            asset_ids: Asset-IDs in derselben Reihenfolge wie dist_matrix.
+            persistence_threshold: Minimale Persistenz (death - birth,
+                mit gedeckeltem death), die der Gewinner-Knoten haben muss.
+            epsilon_cap: Obere Distanz-Grenze fuer die Cluster-Suche. Standard
+                1.0 -- einer der beiden vom PDF (Abschnitt 6.1) genannten
+                Beispielwerte fuer max_edge_length (0.5 oder 1.0); entspricht
+                bei d=sqrt(2*(1-rho)) einer Korrelation von rho=0.5.
+            min_cluster_size: Minimale Anzahl Assets pro Cluster (Standard 2).
+
+        Returns:
+            (clusters, z): clusters ist entweder leer oder enthaelt genau EIN
+            Dict mit den Schluesseln "asset_ids", "node_id", "birth", "death",
+            "persistence", "size". node_id ist der Index des Knotens in der
+            scipy-Linkage-Matrix z (n..2n-2), nuetzlich um den Cluster z.B. im
+            Dendrogramm gezielt einzufaerben. z ist die scipy-Linkage-Matrix
+            (Wiederverwendung fuer Dendrogramm/Barcode-Plots, statt sie
+            doppelt zu berechnen).
+        """
+        n = len(asset_ids)
+        if n < 2 or dist_matrix.shape != (n, n):
+            return [], np.empty((0, 4))
+
+        z = linkage(squareform(dist_matrix, checks=False), method="single")
+
+        birth = {i: 0.0 for i in range(n)}
+        members = {i: [i] for i in range(n)}
+        parent_birth: dict[int, float] = {}
+
+        for row_idx, (c1, c2, dist, _count) in enumerate(z):
+            c1, c2 = int(c1), int(c2)
+            cluster_id = n + row_idx
+            birth[cluster_id] = float(dist)
+            members[cluster_id] = members[c1] + members[c2]
+            parent_birth[c1] = float(dist)
+            parent_birth[c2] = float(dist)
+
+        root_id = n + len(z) - 1
+
+        def death_of(node_id: int) -> float:
+            if node_id == root_id:
+                return epsilon_cap
+            return min(parent_birth[node_id], epsilon_cap)
+
+        def persistence_of(node_id: int) -> float:
+            node_birth = birth[node_id]
+            if node_birth >= epsilon_cap:
+                return -np.inf
+            return death_of(node_id) - node_birth
+
+        best_node_id = None
+        best_persistence = persistence_threshold
+        for node_id in range(n + len(z)):
+            if len(members[node_id]) < min_cluster_size:
+                continue
+            node_persistence = persistence_of(node_id)
+            if node_persistence > best_persistence:
+                best_persistence = node_persistence
+                best_node_id = node_id
+
+        if best_node_id is None:
+            return [], z
+
+        cluster = {
+            "asset_ids": sorted(asset_ids[i] for i in members[best_node_id]),
+            "node_id": best_node_id,
+            "birth": birth[best_node_id],
+            "death": death_of(best_node_id),
+            "persistence": best_persistence,
+            "size": len(members[best_node_id]),
+        }
+        return [cluster], z
+
+    @staticmethod
+    def get_all_node_persistences(
+        dist_matrix: np.ndarray,
+        epsilon_cap: float = 1.0,
+        min_cluster_size: int = MIN_CLUSTER_SIZE,
+    ) -> list[float]:
+        """Persistenz JEDES Kandidaten-Knotens (nicht nur des Gewinners).
+
+        Fuer die Kalibrierung von persistence_threshold per Histogramm (PDF
+        Abschnitt 6.1: "Plot histograms of persistence values to choose a
+        meaningful cutoff"). Verwendet dieselbe birth/death/epsilon_cap-
+        Semantik wie get_persistent_clusters (death gedeckelt bei
+        epsilon_cap, Knoten mit birth >= epsilon_cap existieren nicht
+        innerhalb des betrachteten Bereichs), gibt aber die Persistenz ALLER
+        Knoten mit Groesse >= min_cluster_size zurueck statt nur den mit der
+        hoechsten Persistenz -- so laesst sich die Verteilung "echtes Signal
+        vs. Rauschen" ueber viele Fenster hinweg sichtbar machen.
+
+        Args:
+            dist_matrix: Quadratische, symmetrische Distanzmatrix (n, n).
+            epsilon_cap: siehe get_persistent_clusters.
+            min_cluster_size: siehe get_persistent_clusters.
+
+        Returns:
+            Liste der Persistenzwerte aller Kandidaten-Knoten (kann leer
+            sein, z.B. bei n < 2).
+        """
+        n = dist_matrix.shape[0]
+        if n < 2:
+            return []
+
+        z = linkage(squareform(dist_matrix, checks=False), method="single")
+
+        birth = {i: 0.0 for i in range(n)}
+        size = {i: 1 for i in range(n)}
+        parent_birth: dict[int, float] = {}
+
+        for row_idx, (c1, c2, dist, count) in enumerate(z):
+            c1, c2 = int(c1), int(c2)
+            cluster_id = n + row_idx
+            birth[cluster_id] = float(dist)
+            size[cluster_id] = int(count)
+            parent_birth[c1] = float(dist)
+            parent_birth[c2] = float(dist)
+
+        root_id = n + len(z) - 1
+
+        def death_of(node_id: int) -> float:
+            if node_id == root_id:
+                return epsilon_cap
+            return min(parent_birth[node_id], epsilon_cap)
+
+        persistences: list[float] = []
+        for node_id in range(n + len(z)):
+            if size[node_id] < min_cluster_size:
+                continue
+            node_birth = birth[node_id]
+            if node_birth >= epsilon_cap:
+                continue
+            persistences.append(death_of(node_id) - node_birth)
+
+        return persistences
+
+    @staticmethod
     def residualize_returns(
         returns_df: pd.DataFrame,
         *,
@@ -492,6 +666,128 @@ class HelperFunctions:
             residuals[column] = y - design @ beta
 
         return pd.DataFrame(residuals, index=returns_df.index)
+
+    @staticmethod
+    def build_residual_point_cloud(
+        ohlcv_df: pd.DataFrame,
+        universe_df: pd.DataFrame,
+        end_date: pd.Timestamp,
+        id_to_symbol: dict[int, str],
+        factor_columns: list[str],
+        *,
+        regression_lookback_days: int,
+        topological_lookback_days: int,
+        min_asset_coverage: float = MIN_ASSET_COVERAGE,
+        exclude_asset_ids: set[int] | None = None,
+    ) -> dict | None:
+        """Wie build_point_cloud, aber auf Regressions-Residuen statt Rohreturns.
+
+        Entkoppelt zwei Fenstergroessen, die inhaltlich unterschiedliche Dinge
+        tun und daher nicht dieselbe Groesse haben muessen:
+
+        - regression_lookback_days: Fenster, ueber das die OLS-Beta(s) gegen
+          factor_columns geschaetzt werden. Sollte grosszuegig sein (viele
+          5min-Kerzen), damit die Beta-Schaetzung nicht auf wenigen Punkten
+          rauscht.
+        - topological_lookback_days: Fenster, das tatsaechlich als Punktwolke
+          fuer die persistente Homologie/das Clustering verwendet wird -- die
+          juengsten topological_lookback_days Tage INNERHALB des breiteren
+          Regressionsfensters. Muss <= regression_lookback_days sein, sonst
+          gibt es keine Ueberlappung und die Funktion liefert None.
+
+        Ablauf: (1) rohe Punktwolke ueber das volle regression_lookback_days-
+        Fenster holen (inkl. der Faktor-Assets selbst, auch wenn diese via
+        exclude_asset_ids eigentlich ausgeschlossen waeren -- siehe unten),
+        (2) per residualize_returns auf alle Nicht-Faktor-Spalten anwenden
+        (die Faktor-Spalten selbst fallen dabei automatisch raus), (3) auf die
+        juengsten topological_lookback_days Tage zuschneiden.
+
+        Da exclude_asset_ids typischerweise auch die Faktor-Assets selbst
+        enthaelt (ihr eigenes Residuum gegen sich selbst waere degenerate,
+        siehe residualize_returns) -- diese aber fuer Schritt (1) trotzdem
+        als Regressor-Zeitreihe gebraucht werden -- werden die Faktor-Asset-
+        IDs fuer den rohen Fetch aus exclude_asset_ids herausgenommen und erst
+        durch residualize_returns wieder entfernt. Ein Basket, das die
+        Faktor-Assets ohnehin nicht enthaelt (sie wurden ja i.d.R. bereits aus
+        excluded_ids ausgeschlossen), bekommt dadurch trotzdem ihre Kursreihe
+        fuer die Regression geliefert, ohne dass sie am Ende als eigene
+        Dimension im Ergebnis auftauchen.
+
+        Args:
+            ohlcv_df, universe_df: siehe build_point_cloud.
+            end_date: Enddatum beider Fenster (Regression und Topologie
+                enden am selben Tag, nur ihr jeweiliger Beginn unterscheidet
+                sich).
+            id_to_symbol: Mapping asset_id -> Symbol, um factor_columns
+                (Symbole) auf Asset-IDs abzubilden und umgekehrt.
+            factor_columns: Symbole der Regressor-Asset(s), z.B. ["BTC"]
+                oder ["BTC", "ETH"].
+            regression_lookback_days: siehe oben.
+            topological_lookback_days: siehe oben. Muss <= regression_lookback_days.
+            min_asset_coverage: siehe build_point_cloud.
+            exclude_asset_ids: Assets, die NICHT als Ziel-Dimension im
+                Ergebnis auftauchen sollen (z.B. Stablecoins, die Faktor-
+                Assets selbst, alles ausserhalb des aktuellen Baskets). Die
+                Faktor-Assets werden trotzdem fuer die Regression geladen,
+                siehe oben.
+
+        Returns:
+            Dict im selben Format wie build_point_cloud (point_cloud,
+            asset_ids, timestamps, n_points, n_dimensions, start_date,
+            end_date), diesmal mit residualisierten statt rohen Returns.
+            None, falls das breite Fenster zu wenig Daten liefert, eines der
+            Faktor-Assets darin fehlt, oder topological_lookback_days groesser
+            als regression_lookback_days ist.
+        """
+        if topological_lookback_days > regression_lookback_days:
+            return None
+
+        sym_to_id = {symbol: asset_id for asset_id, symbol in id_to_symbol.items()}
+        factor_asset_ids = {sym_to_id[s] for s in factor_columns if s in sym_to_id}
+        if len(factor_asset_ids) != len(factor_columns):
+            return None
+
+        # Faktor-Assets fuer den breiten Fetch immer zulassen, egal ob der
+        # Aufrufer sie (z.B. als Teil von excluded_ids) eigentlich ausschliessen
+        # wollte -- sie werden weiter unten durch residualize_returns ohnehin
+        # wieder entfernt.
+        exclude_for_regression = (exclude_asset_ids or set()) - factor_asset_ids
+
+        wide = HelperFunctions.build_point_cloud(
+            ohlcv_df=ohlcv_df,
+            universe_df=universe_df,
+            end_date=end_date,
+            window_size_days=regression_lookback_days,
+            min_asset_coverage=min_asset_coverage,
+            exclude_asset_ids=exclude_for_regression,
+        )
+        if wide is None:
+            return None
+
+        wide_symbols = [id_to_symbol.get(a, f"ID:{a}") for a in wide["asset_ids"]]
+        if any(f not in wide_symbols for f in factor_columns):
+            return None
+
+        wide_returns_df = pd.DataFrame(wide["point_cloud"], columns=wide_symbols, index=wide["timestamps"])
+        residual_df = HelperFunctions.residualize_returns(wide_returns_df, factor_columns=factor_columns)
+
+        topo_start = pd.to_datetime(end_date, utc=True).normalize() - pd.Timedelta(
+            days=topological_lookback_days - 1
+        )
+        sliced = residual_df.loc[residual_df.index >= topo_start]
+
+        if sliced.shape[0] < 2 or sliced.shape[1] < 2:
+            return None
+
+        return {
+            "point_cloud": sliced.to_numpy(),
+            "asset_ids": [sym_to_id[c] for c in sliced.columns],
+            "timestamps": sliced.index,
+            "n_points": sliced.shape[0],
+            "n_dimensions": sliced.shape[1],
+            "start_date": topo_start,
+            "end_date": pd.to_datetime(end_date, utc=True).normalize(),
+        }
 
     @staticmethod
     def compute_rolling_volume_table(
