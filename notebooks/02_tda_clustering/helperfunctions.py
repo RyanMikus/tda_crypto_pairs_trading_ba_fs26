@@ -1090,4 +1090,87 @@ class HelperFunctions:
 
         return lines
 
+    @staticmethod
+    def discover_cliques_over_dates(
+        *,
+        ohlcv_df: pd.DataFrame,
+        universe_df: pd.DataFrame,
+        rolling_volume_df: pd.DataFrame,
+        id_column: str,
+        date_column: str,
+        basket_labels: list[str],
+        basket_upper_bounds: list[float],
+        exclude_ids_for_search: set[int],
+        all_asset_ids: set[int],
+        best_lookback: dict[str, int],
+        best_threshold: dict[str, float],
+        epsilon_cap: float,
+        point_cloud_fn,
+        dates: list,
+    ) -> pd.DataFrame:
+        """Fuehrt die (teure) Clique-Discovery ueber viele Tage x Baskets aus.
+
+        Gedacht zum EINMALIGEN Berechnen und Cachen (siehe
+        05_clique_cache.ipynb) statt bei jedem nachgelagerten Notebook
+        (Signal-Screening, spaeter Backtest) neu zu rechnen -- die eigentlich
+        teure Arbeit ist hier drin (volle Vietoris-Rips/Persistenz-Berechnung
+        pro Tag und Basket), alles danach (Feature-Berechnung, Forward-
+        Returns) ist vergleichsweise billig und soll bei jeder neuen
+        Feature-Idee schnell neu laufen koennen, ohne diese Schleife zu
+        wiederholen.
+
+        point_cloud_fn: dieselbe Signatur wie in
+        cloudvisualisation.build_persistent_cluster_widget (ohlcv_df,
+        universe_df, end_date, window_size_days, exclude_asset_ids) ->
+        dict|None -- HelperFunctions.build_point_cloud fuer die rohe Variante,
+        ein Wrapper um build_residual_point_cloud fuer die residualisierte
+        (siehe 03_pointclouds.ipynb / 04_residual_pointclouds.ipynb).
+
+        Returns:
+            DataFrame mit einer Zeile pro (Datum, Basket), an dem tatsaechlich
+            eine Clique gefunden wurde (kein Eintrag fuer Tage ohne Cluster --
+            Abwesenheit in dieser Tabelle IST die Information). Spalten:
+            discovery_date, basket, asset_ids (list[int]), persistence, size,
+            lookback_days.
+        """
+        rows = []
+        for label in basket_labels:
+            lb = best_lookback[label]
+            threshold = best_threshold[label]
+
+            for t in dates:
+                basket_df_at_t = HelperFunctions.build_volume_baskets(
+                    rolling_volume_df, t, id_column=id_column, date_column=date_column,
+                    basket_upper_bounds=basket_upper_bounds,
+                )
+                basket_asset_ids = set(basket_df_at_t.loc[basket_df_at_t["basket"] == label, id_column])
+                if len(basket_asset_ids) < 2:
+                    continue
+
+                basket_exclude_ids = exclude_ids_for_search | (all_asset_ids - basket_asset_ids)
+                res = point_cloud_fn(
+                    ohlcv_df=ohlcv_df, universe_df=universe_df, end_date=t,
+                    window_size_days=lb, exclude_asset_ids=basket_exclude_ids,
+                )
+                if res is None or res["n_dimensions"] < 2:
+                    continue
+
+                dist = HelperFunctions.correlation_distance(pd.DataFrame(res["point_cloud"]))
+                clusters, _ = HelperFunctions.get_persistent_clusters(
+                    dist, res["asset_ids"], persistence_threshold=threshold, epsilon_cap=epsilon_cap,
+                )
+                if not clusters:
+                    continue
+                clique = clusters[0]
+                rows.append({
+                    "discovery_date": pd.Timestamp(t).normalize(),
+                    "basket": label,
+                    "asset_ids": clique["asset_ids"],
+                    "persistence": clique["persistence"],
+                    "size": clique["size"],
+                    "lookback_days": lb,
+                })
+
+        return pd.DataFrame(rows)
+
         
