@@ -7,7 +7,7 @@ not rely on `-m` package invocation (src/dashboard/app.py uses relative
 imports internally, which only work when imported as part of the `src`
 package, not when executed directly as a script).
 """
-from src.dashboard.app import main
+from Src.dashboard.app import main
 
 if __name__ == "__main__":
     main()
