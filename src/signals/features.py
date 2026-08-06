@@ -1,43 +1,43 @@
-"""Forward-Return-Screening fuer Signal-Features: wiederverwendbarer Baukasten.
+"""Forward-Return-Screening für Signal-Features: wiederverwendbarer Baukasten.
 
-Zweck: bevor eine echte Entry/Exit-Regel gebaut wird, schnell pruefen, ob ein
-Kandidaten-Feature (Z-Score, vola-adjustierter Spread, ...) ueberhaupt mit dem
-zukuenftigen Return zusammenhaengt -- eine Korrelationskurve statt einer
+Zweck: bevor eine echte Entry/Exit-Regel gebaut wird, schnell prüfen, ob ein
+Kandidaten-Feature (Z-Score, vola-adjustierter Spread, ...) überhaupt mit dem
+zukünftigen Return zusammenhängt -- eine Korrelationskurve statt einer
 vollen Backtest-Infrastruktur pro Kandidat.
 
-Zwei getrennte Zeitschichten (wichtig fuer das Verstaendnis des ganzen Moduls):
+Zwei getrennte Zeitschichten (wichtig für das Verständnis des ganzen Moduls):
 
     1. Clique-DISCOVERY: einmal pro Kalendertag, mit den in 02_tda_clustering
        kalibrierten Parametern (BEST_LOOKBACK/THRESHOLD/EPSILON_CAP). Teuer
        (volle Vietoris-Rips/Persistenz-Berechnung), daher NICHT Teil dieses
-       Moduls -- das laeuft einmalig in 02_tda_clustering/05_clique_cache.ipynb
+       Moduls -- das läuft einmalig in 02_tda_clustering/04_clique_cache.ipynb
        (HelperFunctions.discover_cliques_over_dates) und wird als Parquet-
-       Datei gecacht. Das ist auch der Grund, warum der spaetere Structural-
+       Datei gecacht. Das ist auch der Grund, warum der spätere Structural-
        Break-Monitor (Additional-Info-PDF, "Second Phase") existiert: die
        Clique-MITGLIEDSCHAFT einfrieren statt sie neu zu entdecken.
     2. Signal-LAYER (dieses Modul): liest den Clique-Cache ein und arbeitet
        INNERHALB eines Discovery-Tages auf 5-Min-Kerzen-Basis -- sowohl das
        Feature (z.B. Z-Score) als auch die Forward-Returns. Ein Trade darf
-       ueber Mitternacht hinaus laufen (die Forward-Return-Fenster sind nicht
+       über Mitternacht hinaus laufen (die Forward-Return-Fenster sind nicht
        an den Kalendertag gebunden), nur die Clique-Mitgliedschaft selbst
-       bleibt fuer den ganzen Discovery-Tag fix.
+       bleibt für den ganzen Discovery-Tag fix.
 
 Kernidee, angepasst an die geclusterte Struktur aus 02_tda_clustering: es gibt
-keine einzelne durchgehende Zeitreihe pro Asset (welche Assets ueberhaupt
-zusammen betrachtet werden, aendert sich taeglich), daher wird ein LANGES
-PANEL ueber alle (Kerze, Basket, Asset-in-Clique)-Beobachtungen aufgebaut.
+keine einzelne durchgehende Zeitreihe pro Asset (welche Assets überhaupt
+zusammen betrachtet werden, ändert sich täglich), daher wird ein LANGES
+PANEL über alle (Kerze, Basket, Asset-in-Clique)-Beobachtungen aufgebaut.
 
 Baukasten-Teile:
-    - CliqueContext: alles, was ein Feature ueber eine konkrete Clique an
+    - CliqueContext: alles, was ein Feature über eine konkrete Clique an
       einer konkreten Kerze wissen darf.
     - Feature-Funktionen (Signatur: CliqueContext -> pd.Series) + FEATURE_REGISTRY,
-      um neue Kandidaten einzuhaengen ohne collect_screening_panel anzufassen.
-    - collect_screening_panel: baut das lange Panel, vektorisiert ueber ALLE
+      um neue Kandidaten einzuhängen ohne collect_screening_panel anzufassen.
+    - collect_screening_panel: baut das lange Panel, vektorisiert über ALLE
       Horizonte auf einmal (keine Python-Schleife pro Horizont) -- damit ist
       eine dichte Horizont-Achse (jede einzelne Kerze bis zu einem Maximum)
-      bezahlbar, obwohl sie sonst die Zeilenzahl sprengen wuerde.
-    - correlation_curve: Punkt-Schaetzer der Korrelation PRO Horizont-Kerze
-      (fuer die dichte Kurve) -- bewusst ohne Signifikanztest, Beurteilung
+      bezahlbar, obwohl sie sonst die Zeilenzahl sprengen würde.
+    - correlation_curve: Punkt-Schätzer der Korrelation PRO Horizont-Kerze
+      (für die dichte Kurve) -- bewusst ohne Signifikanztest, Beurteilung
       passiert visuell im Plot.
     - plot_correlation_curves: Linienplot, eine Linie je Feature.
 """
@@ -54,10 +54,10 @@ import pandas as pd
 
 @dataclass
 class CliqueContext:
-    """Alles, was ein Feature ueber eine konkrete Clique an einer Kerze braucht.
+    """Alles, was ein Feature über eine konkrete Clique an einer Kerze braucht.
 
-    Neue Felder bei Bedarf ergaenzen (z.B. ein Momentum-Fenster) -- bestehende
-    Feature-Funktionen bleiben davon unberuehrt, sie lesen nur die Felder,
+    Neue Felder bei Bedarf ergänzen (z.B. ein Momentum-Fenster) -- bestehende
+    Feature-Funktionen bleiben davon unberührt, sie lesen nur die Felder,
     die sie kennen.
     """
     timestamp: pd.Timestamp    # exakter 5-Min-Kerzen-Zeitstempel dieser Beobachtung
@@ -92,13 +92,13 @@ def feature_zscore(ctx: CliqueContext) -> pd.Series:
 FEATURE_REGISTRY: dict = {
     "zscore": feature_zscore,
 }
-# Weitere Kandidaten hier eintragen, siehe Docstring von feature_zscore fuer
+# Weitere Kandidaten hier eintragen, siehe Docstring von feature_zscore für
 # die erwartete Signatur (CliqueContext -> pd.Series, index=asset_syms).
-# ctx.persistence und ctx.trailing_vol stehen bereits zur Verfuegung, falls
+# ctx.persistence und ctx.trailing_vol stehen bereits zur Verfügung, falls
 # ein Feature die Clique-Persistenz oder die eigene Asset-Vola einbeziehen
 # will (z.B. Z-Score * Persistenz als Konfidenz-Gewicht, oder Abweichung
 # geteilt durch die eigene rollierende Vola statt der Cross-Sektions-Std der
-# Clique -- naeher am Lin-et-al.-Prinzip aus der Additional-Info-PDF).
+# Clique -- näher am Lin-et-al.-Prinzip aus der Additional-Info-PDF).
 
 
 # ============================================================================
@@ -107,7 +107,7 @@ FEATURE_REGISTRY: dict = {
 
 def build_returns_matrix(ohlcv_df: pd.DataFrame, *, timestamp_column: str, asset_id_column: str, close_column: str) -> pd.DataFrame:
     """5-Min-Kerzen-Returnmatrix (Index=Zeitstempel, Spalten=asset_id), direkt
-    aus den rohen Schlusskursen -- keine Tagesaggregation mehr. Basis fuer
+    aus den rohen Schlusskursen -- keine Tagesaggregation mehr. Basis für
     candle_return/trailing_vol/Forward-Return-Pfade unten."""
     price_matrix = ohlcv_df.pivot_table(
         index=timestamp_column, columns=asset_id_column, values=close_column, aggfunc="last",
@@ -116,13 +116,13 @@ def build_returns_matrix(ohlcv_df: pd.DataFrame, *, timestamp_column: str, asset
 
 
 def build_trailing_vol(returns_df: pd.DataFrame, *, window_candles: int) -> pd.DataFrame:
-    """Rollierende Kerzen-Return-Std ueber window_candles Kerzen, min_periods=window_candles
+    """Rollierende Kerzen-Return-Std über window_candles Kerzen, min_periods=window_candles
     (kausal: bei Kerze t nur Daten bis einschliesslich t-1 durch den Shift)."""
     return returns_df.shift(1).rolling(window_candles, min_periods=window_candles).std(ddof=0)
 
 
 # ============================================================================
-# Taeglich (bei Entry) eingefrorene Residualisierung, jetzt kerzenbasiert
+# Täglich (bei Entry) eingefrorene Residualisierung, jetzt kerzenbasiert
 # ============================================================================
 
 def compute_frozen_betas(
@@ -133,9 +133,9 @@ def compute_frozen_betas(
     at_timestamp: pd.Timestamp,
     regression_lookback_candles: int,
 ) -> dict | None:
-    """Schaetzt EINMAL das OLS-Beta jedes Ziel-Assets gegen factor_asset_ids,
-    ueber die regression_lookback_candles Kerzen VOR at_timestamp (kausal,
-    kein Blick auf at_timestamp selbst). Wird danach fuer den ganzen
+    """Schätzt EINMAL das OLS-Beta jedes Ziel-Assets gegen factor_asset_ids,
+    über die regression_lookback_candles Kerzen VOR at_timestamp (kausal,
+    kein Blick auf at_timestamp selbst). Wird danach für den ganzen
     Discovery-Tag (alle Kerzen-Entries UND alle Forward-Horizonte) mit
     DEMSELBEN eingefrorenen Beta angewendet (kein Re-Fit pro Kerze) --
     konsistent mit dem "Beta bei Entry einfrieren"-Prinzip des Structural-
@@ -175,9 +175,9 @@ def compute_frozen_betas(
 
 def _apply_frozen_betas_matrix(sub_returns: pd.DataFrame, *, factor_asset_ids: list, betas: dict) -> pd.DataFrame:
     """Wendet compute_frozen_betas' Ergebnis auf eine GANZE Kerzen-Spanne auf
-    einmal an (vektorisiert ueber alle Zeilen, statt pro Kerze einzeln) --
-    Residuum = tatsaechlicher Return minus faktor-erklaerter Return.
-    Spalten ohne gueltiges Beta werden komplett NaN."""
+    einmal an (vektorisiert über alle Zeilen, statt pro Kerze einzeln) --
+    Residuum = tatsächlicher Return minus faktor-erklärter Return.
+    Spalten ohne gültiges Beta werden komplett NaN."""
     factor_vals = sub_returns[factor_asset_ids].to_numpy()
     design = np.column_stack([np.ones(len(sub_returns)), factor_vals])
     out = {}
@@ -200,17 +200,17 @@ def _forward_returns_dense(
     *,
     additive: bool,
 ) -> np.ndarray:
-    """Kern der Vektorisierung: fuer JEDEN Entry gleichzeitig JEDEN Horizont
-    berechnen, ohne Python-Schleife ueber Horizonte.
+    """Kern der Vektorisierung: für JEDEN Entry gleichzeitig JEDEN Horizont
+    berechnen, ohne Python-Schleife über Horizonte.
 
     sub_matrix: (T, n_assets) Returns (roh) oder Residuen (additive=True) --
         deckt entry_positions UND entry_positions.max() + horizons.max() ab.
     entry_positions: Positionen (in sub_matrix) der Entry-Kerzen.
     horizons: Kerzen-Offsets (>=1).
-    additive=False (roh): kumulatives Produkt, Forward-Return = Verhaeltnis.
+    additive=False (roh): kumulatives Produkt, Forward-Return = Verhältnis.
     additive=True (residualisiert): kumulative Summe, Forward-Return = Differenz
-        (Approximation fuer kleine Kerzen-Returns -- fuers Screening per
-        Korrelation ausreichend, keine praezise P&L-Rechnung).
+        (Approximation für kleine Kerzen-Returns -- fürs Screening per
+        Korrelation ausreichend, keine präzise P&L-Rechnung).
 
     Returns:
         np.ndarray (n_entries, n_horizons, n_assets) -- Forward-Return relativ
@@ -249,19 +249,19 @@ def collect_screening_panel(
     """Baut das lange Screening-Panel: eine Zeile pro (Entry-Kerze, Basket, Asset-in-Clique).
 
     Nutzt eine BEREITS BERECHNETE Clique-Discovery (siehe
-    02_tda_clustering/05_clique_cache.ipynb + HelperFunctions.discover_cliques_over_dates)
+    02_tda_clustering/04_clique_cache.ipynb + HelperFunctions.discover_cliques_over_dates)
     statt sie selbst zu wiederholen -- die teure Persistenzberechnung passiert
     dort einmalig, hier nur noch die vergleichsweise billige, vektorisierte
     Kerzen-/Feature-/Forward-Return-Berechnung (siehe _forward_returns_dense),
-    was eine dichte Horizont-Achse (jede Kerze statt weniger Stuetzpunkte)
-    ueberhaupt bezahlbar macht -- das macht diese Funktion schnell genug, um
+    was eine dichte Horizont-Achse (jede Kerze statt weniger Stützpunkte)
+    überhaupt bezahlbar macht -- das macht diese Funktion schnell genug, um
     bei jeder neuen Feature-Idee neu zu laufen, ohne auf die Discovery zu warten.
 
     Args:
         cliques_df: DataFrame wie von HelperFunctions.discover_cliques_over_dates
-            zurueckgegeben (discovery_date, basket, asset_ids, persistence,
+            zurückgegeben (discovery_date, basket, asset_ids, persistence,
             lookback_days) -- z.B. per pd.read_parquet aus dem Cache geladen
-            und ggf. schon auf den gewuenschten Zeitraum gefiltert.
+            und ggf. schon auf den gewünschten Zeitraum gefiltert.
         returns_df / trailing_vol_df: 5-Min-Kerzen, Spalten=asset_id (siehe
             build_returns_matrix/build_trailing_vol) -- bei residualize=True
             sind das die ROHEN (nicht vorab residualisierten) Returns, die
@@ -270,10 +270,10 @@ def collect_screening_panel(
         entry_stride_candles: nur jede N-te Kerze des Discovery-Tages wird als
             Entry verwendet (1 = jede Kerze -- Vorsicht, multipliziert die
             Zeilenzahl).
-        horizons: Kerzen-Offsets (>=1), z.B. np.arange(1, 289) fuer einen
-            ganzen Tag dicht. Forward-Fenster duerfen ueber Mitternacht
-            hinausreichen (Tage, an denen der Horizont ueber das Ende von
-            returns_df hinausreichen wuerde, werden stillschweigend uebersprungen).
+        horizons: Kerzen-Offsets (>=1), z.B. np.arange(1, 289) für einen
+            ganzen Tag dicht. Forward-Fenster dürfen über Mitternacht
+            hinausreichen (Tage, an denen der Horizont über das Ende von
+            returns_df hinausreichen würde, werden stillschweigend übersprungen).
     """
     if residualize and (factor_asset_ids is None or regression_lookback_candles is None):
         raise ValueError("residualize=True braucht factor_asset_ids und regression_lookback_candles")
@@ -299,7 +299,7 @@ def collect_screening_panel(
         last_entry_pos = ts_index.searchsorted(entry_ts[-1])
         span_end_pos = last_entry_pos + max_horizon
         if span_end_pos >= len(ts_index):
-            continue  # Horizont wuerde ueber das Ende der verfuegbaren Daten hinausreichen
+            continue  # Horizont würde über das Ende der verfügbaren Daten hinausreichen
 
         span_index = ts_index[first_entry_pos:span_end_pos + 1]
         entry_positions_in_span = ts_index.searchsorted(entry_ts) - first_entry_pos
@@ -372,10 +372,10 @@ def correlation_curve(
     method: str = "spearman",
     min_obs: int = 10,
 ) -> pd.DataFrame:
-    """Punkt-Schaetzer der Korrelation PRO Horizont -- gedacht fuer eine
+    """Punkt-Schätzer der Korrelation PRO Horizont -- gedacht für eine
     DICHTE Horizont-Achse (viele Werte), um die ganze Kurve auf einen Blick
-    zu sehen. Bewusst ohne Konfidenzband: die Kurvenform (faellt sie schnell
-    auf 0 ab oder bleibt sie ueber viele Horizonte stabil negativ?) soll
+    zu sehen. Bewusst ohne Konfidenzband: die Kurvenform (fällt sie schnell
+    auf 0 ab oder bleibt sie über viele Horizonte stabil negativ?) soll
     direkt im Plot beurteilt werden.
 
     Returns:
@@ -410,8 +410,8 @@ def plot_correlation_curves(
 
     Args:
         curves: dict feature_name -> DataFrame wie von correlation_curve
-            zurueckgegeben (Index=Horizont in Kerzen, Spalte point_estimate).
-        candle_minutes: Kerzengroesse in Minuten, fuer die x-Achsen-Beschriftung
+            zurückgegeben (Index=Horizont in Kerzen, Spalte point_estimate).
+        candle_minutes: Kerzengrösse in Minuten, für die x-Achsen-Beschriftung
             (Standard 5, siehe config.OHLCV_DIR = asset_ohlcv_5m).
     """
     import matplotlib.pyplot as plt
@@ -449,13 +449,13 @@ def plot_correlation_curves_interactive(
     """Interaktive (Plotly) Version von plot_correlation_curves: alle Varianten
     (z.B. roh/residualisiert) UND alle Features gleichzeitig in EINER Figur,
     statt getrennter Subplots -- klickbare Legende zum gezielten Ein-/Ausblenden
-    einzelner Linien, Hover zeigt Korrelation + n_obs. Wird nuetzlicher, je mehr
-    Eintraege FEATURE_REGISTRY bekommt (aktuell nur "zscore", daher noch eine
+    einzelner Linien, Hover zeigt Korrelation + n_obs. Wird nützlicher, je mehr
+    Einträge FEATURE_REGISTRY bekommt (aktuell nur "zscore", daher noch eine
     Linie pro Variante).
 
     Args:
         curves_by_variant: dict variant_name -> (dict feature_name -> DataFrame
-            wie von correlation_curve zurueckgegeben, z.B.
+            wie von correlation_curve zurückgegeben, z.B.
             {"roh": curves_raw, "residualisiert": curves_residual}).
     """
     import plotly.graph_objects as go

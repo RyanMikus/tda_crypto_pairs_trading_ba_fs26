@@ -3,14 +3,10 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
-from sklearn.decomposition import PCA
 import warnings
-from pathlib import Path
 
-import sys
-sys.path.insert(0, str(Path("..").resolve()))
-from config import (
-DATA_DIR, OHLCV_DIR, ASSET_DAILY_PATH, ASSETS_PATH,DATE_COL, TIMESTAMP_COL, CLOSE_COL, ASSET_ID_COL
+from src.config import (
+    DATE_COL, TIMESTAMP_COL, CLOSE_COL, ASSET_ID_COL,
 )
 
 
@@ -94,154 +90,6 @@ class HelperFunctions:
             .tolist()
         )
         return asset_ids
-
-    @staticmethod
-    def build_window_input(
-        ohlcv_df: pd.DataFrame,
-        universe_df: pd.DataFrame,
-        end_date: pd.Timestamp,
-        window_size_days: int = WINDOW_SIZE_DAYS,
-        min_asset_coverage: float = MIN_ASSET_COVERAGE,
-        exclude_asset_ids: set[int] | None = None,
-    ) -> dict | None:
-        """Baut den vollständigen Eingabe-Dictionary für ein Sliding-Window auf.
-
-        Führt folgende Schritte in Reihenfolge aus:
-        1. Bestimmt das Zeitfenster [end_date - window_size_days + 1, end_date].
-        2. Holt das qualifizierte Universum für end_date via
-           get_universe_asset_ids_for_date.
-        3. Filtert ohlcv_df auf dieses Fenster und diese Assets.
-        4. Pivotiert die Preise zu einer Matrix (Timestamps × Assets).
-        5. Entfernt Assets/Timestamps mit zu vielen NaN-Werten gemäss
-           min_asset_coverage.
-        6. Berechnet prozentuale Returns via pct_change().
-        7. Berechnet die Korrelationsdistanz-Matrix via correlation_distance().
-
-        Args:
-            ohlcv_df: OHLCV-DataFrame mit mindestens den Spalten DATE_COL,
-                TIMESTAMP_COL, ASSET_ID_COL und CLOSE_COL.
-            universe_df: Universe-DataFrame mit DATE_COL und ASSET_ID_COL
-                (Ausgabe von Basket-Berechnung).
-            end_date: Enddatum des Fensters. Wird auf UTC-Mitternacht normiert.
-            window_size_days: Anzahl Kalendertage im Fenster (Standard: 30).
-            min_asset_coverage: Mindestanteil nicht-NaN Timestamps, die ein
-                Asset haben muss, um im Fenster behalten zu werden (Standard:
-                0.95 = 95 %).
-
-        Returns:
-            Dictionary mit folgenden Schlüsseln, oder None wenn das Fenster
-            zu wenige Daten enthält (< 2 Assets, < 3 Timestamps):
-                - start_date (Timestamp): Startdatum des Fensters
-                - end_date (Timestamp): Enddatum des Fensters
-                - asset_ids (list[int]): Asset-IDs nach Filterung
-                - n_assets (int): Anzahl Assets
-                - n_timestamps (int): Anzahl Return-Perioden
-                - price_matrix (DataFrame): Preis-Matrix (Timestamps × Assets)
-                - returns (DataFrame): Return-Matrix (Timestamps × Assets)
-                - distance_matrix (ndarray): (n_assets × n_assets) Distanzmatrix
-        """
-        end_date = pd.to_datetime(end_date, utc=True).normalize()
-        start_date = end_date - pd.Timedelta(days=window_size_days - 1)
-
-        eligible_asset_ids = HelperFunctions.get_universe_asset_ids_for_date(universe_df, end_date)
-        if exclude_asset_ids:
-            eligible_asset_ids = [i for i in eligible_asset_ids if i not in exclude_asset_ids]
-        if len(eligible_asset_ids) < 2:
-            return None
-
-        window_data = ohlcv_df.loc[
-            (ohlcv_df[DATE_COL] >= start_date) &
-            (ohlcv_df[DATE_COL] <= end_date) &
-            (ohlcv_df[ASSET_ID_COL].isin(eligible_asset_ids)),
-            [TIMESTAMP_COL, ASSET_ID_COL, CLOSE_COL]
-        ].copy()
-
-        if window_data.empty:
-            return None
-
-        price_matrix = (
-            window_data
-            .pivot_table(
-                index=TIMESTAMP_COL,
-                columns=ASSET_ID_COL,
-                values=CLOSE_COL,
-                aggfunc="last",
-            )
-            .sort_index()
-        )
-
-        if price_matrix.empty:
-            return None
-
-        min_non_null = int(np.ceil(len(price_matrix) * min_asset_coverage))
-        price_matrix = price_matrix.dropna(axis=1, thresh=min_non_null)
-        price_matrix = price_matrix.dropna(axis=0, how="any")
-
-        if price_matrix.shape[0] < 3 or price_matrix.shape[1] < 2:
-            return None
-
-        returns = price_matrix.pct_change().dropna(how="any")
-
-        if returns.shape[0] < 2 or returns.shape[1] < 2:
-            return None
-
-        dist = HelperFunctions.correlation_distance(returns)
-
-        return {
-            "start_date": start_date,
-            "end_date": end_date,
-            "asset_ids": [int(x) for x in returns.columns.tolist()],
-            "n_assets": returns.shape[1],
-            "n_timestamps": returns.shape[0],
-            "price_matrix": price_matrix,
-            "returns": returns,
-            "distance_matrix": dist,
-        }
-
-    @staticmethod
-    def extract_persistent_h0_features(diagram: np.ndarray, min_persistence: float = MIN_PERSISTENCE) -> list[dict]:
-        """Extrahiert persistente H0-Features aus einem gtda-Persistenzdiagramm.
-
-        H0-Features entsprechen zusammenhängenden Komponenten (Connected
-        Components) im Vietoris-Rips-Komplex. Eine hohe Persistenz
-        (death - birth) bedeutet, dass sich zwei Gruppen erst bei einem grossen
-        Distanz-Schwellenwert zusammenschliessen — also strukturell weit
-        voneinander entfernt sind. Schwach persistente Features (Rauschen) werden
-        via min_persistence herausgefiltert.
-
-        Das gtda-Format eines Persistenzdiagramms ist ein numpy Array mit drei
-        Spalten: [birth, death, dimension]. Diese Methode filtert auf
-        dimension == 0 (H0).
-
-        Args:
-            diagram: numpy Array der Form (n_features, 3) mit Spalten
-                [birth, death, dimension], wie von giotto-tda zurückgegeben.
-            min_persistence: Minimale Persistenz (death - birth), die ein
-                Feature haben muss, um behalten zu werden (Standard: 1.0).
-                Wert 0 behält alle Features.
-
-        Returns:
-            Liste von Dictionaries, absteigend nach Persistenz sortiert.
-            Jedes Dictionary enthält:
-                - birth (float): Filterwert, bei dem die Komponente entsteht
-                - death (float): Filterwert, bei dem die Komponente verschwindet
-                - persistence (float): death - birth
-            Leere Liste wenn diagram leer ist oder kein Feature die
-            Schwelle überschreitet.
-        """
-        if diagram.size == 0:
-            return []
-
-        diagram_df = pd.DataFrame(diagram, columns=["birth", "death", "dimension"])
-
-        h0 = diagram_df.loc[diagram_df["dimension"] == 0].copy()
-
-        h0["persistence"] = h0["death"] - h0["birth"]
-
-        h0 = h0.loc[h0["persistence"] > min_persistence].copy()
-        h0 = h0.sort_values("persistence", ascending=False)
-
-        return h0[["birth", "death", "persistence"]].to_dict("records")
 
     @staticmethod
     def build_point_cloud(
@@ -353,60 +201,6 @@ class HelperFunctions:
         }
 
     @staticmethod
-    def get_clusters_at_scale(
-        dist_matrix: np.ndarray,
-        asset_ids: list[int],
-        scale: float,
-        min_cluster_size: int = MIN_CLUSTER_SIZE,
-    ) -> list[list[int]]:
-        """Gruppiert Assets per Single-Linkage-Clustering bei einem gegebenen Distanz-Schwellenwert.
-
-        Verwendet scipy's hierarchisches Single-Linkage-Clustering. Bei
-        Single-Linkage werden zwei Cluster zusammengeführt, sobald das
-        nächste Paar (ein Element aus jedem Cluster) eine Distanz <= scale
-        hat. Das entspricht konzeptuell dem Schnitt eines Dendrogramms bei
-        Höhe scale.
-
-        Diese Methode wird typischerweise verwendet, um für einen bekannten
-        Persistenzwert (z.B. aus extract_persistent_h0_features) die
-        konkreten Asset-Gruppen zu materialisieren.
-
-        Args:
-            dist_matrix: Quadratische, symmetrische Distanzmatrix der Form
-                (n, n) mit Nullen auf der Diagonalen. Muss zur Reihenfolge
-                von asset_ids korrespondieren.
-            asset_ids: Liste der Asset-IDs in derselben Reihenfolge wie die
-                Zeilen/Spalten von dist_matrix.
-            scale: Distanz-Schwellenwert, bei dem der Dendrogramm-Schnitt
-                erfolgt. Assets innerhalb dieser Distanz werden zum selben
-                Cluster zusammengefasst.
-            min_cluster_size: Minimale Anzahl Assets, die ein Cluster haben
-                muss, um in der Ausgabe zu erscheinen (Standard: 2).
-                Singletons werden damit herausgefiltert.
-
-        Returns:
-            Liste von Clustern, absteigend nach Clustergrösse sortiert
-            (Gleichstand: alphabetisch nach Asset-ID). Jeder Cluster ist
-            eine Liste von Asset-IDs (int). Leere Liste wenn weniger als
-            2 Assets übergeben wurden oder kein Cluster die Mindestgrösse
-            erreicht.
-        """
-        if len(asset_ids) < 2:
-            return []
-
-        condensed = squareform(dist_matrix, checks=False)
-        z = linkage(condensed, method="single")
-        labels = fcluster(z, t=scale, criterion="distance")
-
-        groups = {}
-        for idx, label in enumerate(labels):
-            groups.setdefault(label, []).append(int(asset_ids[idx]))
-
-        clusters = [members for members in groups.values() if len(members) >= min_cluster_size]
-        clusters = sorted(clusters, key=lambda x: (-len(x), x))
-        return clusters
-
-    @staticmethod
     def get_persistent_clusters(
         dist_matrix: np.ndarray,
         asset_ids: list[int],
@@ -421,46 +215,46 @@ class HelperFunctions:
         persistence" -- main_feat = max(persistent, key=lambda f: f[2]-f[1]).
         Statt giottos H0-Diagramm (dessen Spaltenkonvention im PDF-Beispiel
         vertauscht ist, siehe unten) wird direkt auf dem Single-Linkage-Baum
-        gearbeitet, da Vietoris-Rips-H0 mathematisch aequivalent zu Single-
-        Linkage ist -- man braucht dafuer keine giotto-tda-Abhaengigkeit.
+        gearbeitet, da Vietoris-Rips-H0 mathematisch äquivalent zu Single-
+        Linkage ist -- man braucht dafür keine giotto-tda-Abhängigkeit.
 
-        Fuer JEDEN Knoten (= Merge-Event, plus die urspruenglichen Assets als
-        Blaetter) des Baums gilt: birth = Hoehe seiner eigenen Entstehung
-        (0 fuer ein einzelnes Asset), death = Hoehe, bei der er selbst in
-        einen groesseren Cluster aufgeht -- gedeckelt bei epsilon_cap, falls
+        Für JEDEN Knoten (= Merge-Event, plus die ursprünglichen Assets als
+        Blätter) des Baums gilt: birth = Höhe seiner eigenen Entstehung
+        (0 für ein einzelnes Asset), death = Höhe, bei der er selbst in
+        einen grösseren Cluster aufgeht -- gedeckelt bei epsilon_cap, falls
         er dort noch nicht verschmolzen ist ("censored death": empirisch
         gegen giotto-tda verifiziert -- eine bis max_edge_length nie
         verschmolzene Komponente bekommt dort ebenfalls death=max_edge_length,
         nicht unendlich). persistence = death - birth. Die Wurzel (= ganzer
         Basket als ein Cluster) ist dabei ein ganz normaler Kandidat wie jeder
         andere Knoten -- keine Sonderrolle, sie gewinnt nur, wenn sie
-        tatsaechlich die hoechste Persistenz im ganzen Baum hat.
+        tatsächlich die höchste Persistenz im ganzen Baum hat.
 
-        Kandidat ist jeder Knoten mit Groesse >= min_cluster_size (Singletons
-        zaehlen nie mit, da ein einzelnes, lange unverschmolzenes Asset
+        Kandidat ist jeder Knoten mit Grösse >= min_cluster_size (Singletons
+        zählen nie mit, da ein einzelnes, lange unverschmolzenes Asset
         rechnerisch eine hohe, aber bedeutungslose eigene "Persistenz" haben
         kann) und persistence > persistence_threshold. Von allen Kandidaten
-        gewinnt der mit der hoechsten Persistenz; gibt es keinen Kandidaten,
-        wird eine leere Liste zurueckgegeben.
+        gewinnt der mit der höchsten Persistenz; gibt es keinen Kandidaten,
+        wird eine leere Liste zurückgegeben.
 
         Args:
             dist_matrix: Quadratische, symmetrische Distanzmatrix (n, n).
             asset_ids: Asset-IDs in derselben Reihenfolge wie dist_matrix.
             persistence_threshold: Minimale Persistenz (death - birth,
                 mit gedeckeltem death), die der Gewinner-Knoten haben muss.
-            epsilon_cap: Obere Distanz-Grenze fuer die Cluster-Suche. Standard
+            epsilon_cap: Obere Distanz-Grenze für die Cluster-Suche. Standard
                 1.0 -- einer der beiden vom PDF (Abschnitt 6.1) genannten
-                Beispielwerte fuer max_edge_length (0.5 oder 1.0); entspricht
+                Beispielwerte für max_edge_length (0.5 oder 1.0); entspricht
                 bei d=sqrt(2*(1-rho)) einer Korrelation von rho=0.5.
             min_cluster_size: Minimale Anzahl Assets pro Cluster (Standard 2).
 
         Returns:
-            (clusters, z): clusters ist entweder leer oder enthaelt genau EIN
-            Dict mit den Schluesseln "asset_ids", "node_id", "birth", "death",
+            (clusters, z): clusters ist entweder leer oder enthält genau EIN
+            Dict mit den Schlüsseln "asset_ids", "node_id", "birth", "death",
             "persistence", "size". node_id ist der Index des Knotens in der
-            scipy-Linkage-Matrix z (n..2n-2), nuetzlich um den Cluster z.B. im
-            Dendrogramm gezielt einzufaerben. z ist die scipy-Linkage-Matrix
-            (Wiederverwendung fuer Dendrogramm/Barcode-Plots, statt sie
+            scipy-Linkage-Matrix z (n..2n-2), nützlich um den Cluster z.B. im
+            Dendrogramm gezielt einzufärben. z ist die scipy-Linkage-Matrix
+            (Wiederverwendung für Dendrogramm/Barcode-Plots, statt sie
             doppelt zu berechnen).
         """
         n = len(asset_ids)
@@ -525,15 +319,15 @@ class HelperFunctions:
     ) -> list[float]:
         """Persistenz JEDES Kandidaten-Knotens (nicht nur des Gewinners).
 
-        Fuer die Kalibrierung von persistence_threshold per Histogramm (PDF
+        Für die Kalibrierung von persistence_threshold per Histogramm (PDF
         Abschnitt 6.1: "Plot histograms of persistence values to choose a
         meaningful cutoff"). Verwendet dieselbe birth/death/epsilon_cap-
         Semantik wie get_persistent_clusters (death gedeckelt bei
         epsilon_cap, Knoten mit birth >= epsilon_cap existieren nicht
         innerhalb des betrachteten Bereichs), gibt aber die Persistenz ALLER
-        Knoten mit Groesse >= min_cluster_size zurueck statt nur den mit der
-        hoechsten Persistenz -- so laesst sich die Verteilung "echtes Signal
-        vs. Rauschen" ueber viele Fenster hinweg sichtbar machen.
+        Knoten mit Grösse >= min_cluster_size zurück statt nur den mit der
+        höchsten Persistenz -- so lässt sich die Verteilung "echtes Signal
+        vs. Rauschen" über viele Fenster hinweg sichtbar machen.
 
         Args:
             dist_matrix: Quadratische, symmetrische Distanzmatrix (n, n).
@@ -589,11 +383,11 @@ class HelperFunctions:
         """Entfernt den linearen Einfluss von Faktor-Assets aus jeder anderen Spalte.
 
         Regressiert jede Spalte von returns_df (ausser factor_columns) einzeln per
-        OLS (mit Intercept) auf die factor_columns und gibt die Residuen zurueck.
+        OLS (mit Intercept) auf die factor_columns und gibt die Residuen zurück.
         Mit einer Faktor-Spalte (z.B. nur "BTC") ist das eine einfache lineare
         Regression; mit mehreren (z.B. "BTC" und "ETH") eine multiple Regression.
         Die Faktor-Spalten selbst werden aus dem Ergebnis entfernt, da ihr eigenes
-        Residuum gegen sich selbst degenerate (~0) waere.
+        Residuum gegen sich selbst degenerate (~0) wäre.
 
         Args:
             returns_df: DataFrame (n_timestamps, n_assets), z.B. Return-Matrix aus
@@ -605,7 +399,7 @@ class HelperFunctions:
         Returns:
             DataFrame mit demselben Index wie returns_df und einer Spalte pro
             Nicht-Faktor-Asset aus returns_df; Werte sind die Regressions-Residuen
-            (der Teil der Rendite, der nicht durch die Faktoren erklaert wird).
+            (der Teil der Rendite, der nicht durch die Faktoren erklärt wird).
 
         Raises:
             KeyError: falls eine factor_column nicht in returns_df vorkommt.
@@ -628,46 +422,6 @@ class HelperFunctions:
         return pd.DataFrame(residuals, index=returns_df.index)
 
     @staticmethod
-    def residualize_against_pca(
-        returns_df: pd.DataFrame,
-        *,
-        n_components: int = 1,
-    ) -> pd.DataFrame:
-        """Entfernt den Einfluss der ersten n_components Hauptkomponenten aus jeder Spalte.
-
-        Statt gegen ein benanntes Faktor-Asset (siehe residualize_returns) wird
-        hier ein synthetischer Markt-Faktor per PCA aus returns_df selbst
-        extrahiert: die ersten n_components Hauptkomponenten-Scores dienen als
-        Regressoren fuer eine OLS-Regression (mit Intercept) jeder einzelnen
-        Spalte, analog zu residualize_returns. Nuetzlich, wenn kein einzelnes
-        Asset (z.B. BTC) als Marktfaktor unterstellt werden soll, sondern die
-        dominante gemeinsame Bewegungsrichtung des gesamten Fensters.
-
-        Args:
-            returns_df: DataFrame (n_timestamps, n_assets), z.B. Return-Matrix aus
-                einer Point Cloud.
-            n_components: Anzahl Hauptkomponenten, die als Faktoren verwendet
-                werden (Standard: 1 = nur die erste/dominante Komponente).
-
-        Returns:
-            DataFrame mit demselben Index und denselben Spalten wie returns_df;
-            Werte sind die Regressions-Residuen (der Teil der Rendite, der nicht
-            durch die ersten n_components Hauptkomponenten erklaert wird).
-        """
-        components = PCA(n_components=n_components, random_state=0).fit_transform(
-            returns_df.to_numpy()
-        )
-        design = np.column_stack([np.ones(len(components)), components])
-
-        residuals = {}
-        for column in returns_df.columns:
-            y = returns_df[column].to_numpy()
-            beta, _, _, _ = np.linalg.lstsq(design, y, rcond=None)
-            residuals[column] = y - design @ beta
-
-        return pd.DataFrame(residuals, index=returns_df.index)
-
-    @staticmethod
     def build_residual_point_cloud(
         ohlcv_df: pd.DataFrame,
         universe_df: pd.DataFrame,
@@ -682,35 +436,35 @@ class HelperFunctions:
     ) -> dict | None:
         """Wie build_point_cloud, aber auf Regressions-Residuen statt Rohreturns.
 
-        Entkoppelt zwei Fenstergroessen, die inhaltlich unterschiedliche Dinge
-        tun und daher nicht dieselbe Groesse haben muessen:
+        Entkoppelt zwei Fenstergrössen, die inhaltlich unterschiedliche Dinge
+        tun und daher nicht dieselbe Grösse haben müssen:
 
-        - regression_lookback_days: Fenster, ueber das die OLS-Beta(s) gegen
-          factor_columns geschaetzt werden. Sollte grosszuegig sein (viele
-          5min-Kerzen), damit die Beta-Schaetzung nicht auf wenigen Punkten
+        - regression_lookback_days: Fenster, über das die OLS-Beta(s) gegen
+          factor_columns geschätzt werden. Sollte grosszügig sein (viele
+          5min-Kerzen), damit die Beta-Schätzung nicht auf wenigen Punkten
           rauscht.
-        - topological_lookback_days: Fenster, das tatsaechlich als Punktwolke
-          fuer die persistente Homologie/das Clustering verwendet wird -- die
-          juengsten topological_lookback_days Tage INNERHALB des breiteren
+        - topological_lookback_days: Fenster, das tatsächlich als Punktwolke
+          für die persistente Homologie/das Clustering verwendet wird -- die
+          jüngsten topological_lookback_days Tage INNERHALB des breiteren
           Regressionsfensters. Muss <= regression_lookback_days sein, sonst
-          gibt es keine Ueberlappung und die Funktion liefert None.
+          gibt es keine Überlappung und die Funktion liefert None.
 
-        Ablauf: (1) rohe Punktwolke ueber das volle regression_lookback_days-
+        Ablauf: (1) rohe Punktwolke über das volle regression_lookback_days-
         Fenster holen (inkl. der Faktor-Assets selbst, auch wenn diese via
-        exclude_asset_ids eigentlich ausgeschlossen waeren -- siehe unten),
+        exclude_asset_ids eigentlich ausgeschlossen wären -- siehe unten),
         (2) per residualize_returns auf alle Nicht-Faktor-Spalten anwenden
         (die Faktor-Spalten selbst fallen dabei automatisch raus), (3) auf die
-        juengsten topological_lookback_days Tage zuschneiden.
+        jüngsten topological_lookback_days Tage zuschneiden.
 
         Da exclude_asset_ids typischerweise auch die Faktor-Assets selbst
-        enthaelt (ihr eigenes Residuum gegen sich selbst waere degenerate,
-        siehe residualize_returns) -- diese aber fuer Schritt (1) trotzdem
+        enthält (ihr eigenes Residuum gegen sich selbst wäre degenerate,
+        siehe residualize_returns) -- diese aber für Schritt (1) trotzdem
         als Regressor-Zeitreihe gebraucht werden -- werden die Faktor-Asset-
-        IDs fuer den rohen Fetch aus exclude_asset_ids herausgenommen und erst
+        IDs für den rohen Fetch aus exclude_asset_ids herausgenommen und erst
         durch residualize_returns wieder entfernt. Ein Basket, das die
-        Faktor-Assets ohnehin nicht enthaelt (sie wurden ja i.d.R. bereits aus
+        Faktor-Assets ohnehin nicht enthält (sie wurden ja i.d.R. bereits aus
         excluded_ids ausgeschlossen), bekommt dadurch trotzdem ihre Kursreihe
-        fuer die Regression geliefert, ohne dass sie am Ende als eigene
+        für die Regression geliefert, ohne dass sie am Ende als eigene
         Dimension im Ergebnis auftauchen.
 
         Args:
@@ -728,7 +482,7 @@ class HelperFunctions:
             exclude_asset_ids: Assets, die NICHT als Ziel-Dimension im
                 Ergebnis auftauchen sollen (z.B. Stablecoins, die Faktor-
                 Assets selbst, alles ausserhalb des aktuellen Baskets). Die
-                Faktor-Assets werden trotzdem fuer die Regression geladen,
+                Faktor-Assets werden trotzdem für die Regression geladen,
                 siehe oben.
 
         Returns:
@@ -736,7 +490,7 @@ class HelperFunctions:
             asset_ids, timestamps, n_points, n_dimensions, start_date,
             end_date), diesmal mit residualisierten statt rohen Returns.
             None, falls das breite Fenster zu wenig Daten liefert, eines der
-            Faktor-Assets darin fehlt, oder topological_lookback_days groesser
+            Faktor-Assets darin fehlt, oder topological_lookback_days grösser
             als regression_lookback_days ist.
         """
         if topological_lookback_days > regression_lookback_days:
@@ -747,7 +501,7 @@ class HelperFunctions:
         if len(factor_asset_ids) != len(factor_columns):
             return None
 
-        # Faktor-Assets fuer den breiten Fetch immer zulassen, egal ob der
+        # Faktor-Assets für den breiten Fetch immer zulassen, egal ob der
         # Aufrufer sie (z.B. als Teil von excluded_ids) eigentlich ausschliessen
         # wollte -- sie werden weiter unten durch residualize_returns ohnehin
         # wieder entfernt.
@@ -798,13 +552,13 @@ class HelperFunctions:
         volume_column: str,
         lookback_days: int,
     ) -> pd.DataFrame:
-        """Berechnet den rollierenden Median-Volumen pro Asset ueber lookback_days.
+        """Berechnet den rollierenden Median-Volumen pro Asset über lookback_days.
 
-        Gedacht als Glaettung des taeglichen 24h-USD-Volumens, um einzelne
+        Gedacht als Glättung des täglichen 24h-USD-Volumens, um einzelne
         Volumen-Spitzen (die sonst ein Asset kurzzeitig in einen anderen
-        Basket springen liessen) auszugleichen. asset_daily_df enthaelt pro
-        Asset nur Zeilen fuer Tage, an denen es die Basis-Volumenschwelle
-        (siehe 01_assets.ipynb Filter 2) bereits erfuellt hat -- diese Funktion
+        Basket springen liessen) auszugleichen. asset_daily_df enthält pro
+        Asset nur Zeilen für Tage, an denen es die Basis-Volumenschwelle
+        (siehe 01_assets.ipynb Filter 2) bereits erfüllt hat -- diese Funktion
         selbst nimmt keine weitere Filterung vor.
 
         Args:
@@ -812,8 +566,8 @@ class HelperFunctions:
                 volume_column.
             id_column: Spaltenname der Asset-ID.
             date_column: Spaltenname des Datums.
-            volume_column: Spaltenname des taeglichen USD-Volumens.
-            lookback_days: Fenstergroesse (und min_periods) fuer den
+            volume_column: Spaltenname des täglichen USD-Volumens.
+            lookback_days: Fenstergrösse (und min_periods) für den
                 rollierenden Median.
 
         Returns:
@@ -853,22 +607,22 @@ class HelperFunctions:
         """Ordnet einen Volumenwert einem von N Baskets zu.
 
         basket_upper_bounds ist eine aufsteigend sortierte Liste von N-1
-        Obergrenzen fuer einen N-Basket-Split -- die Anzahl Baskets und ihre
-        Grenzen sind damit frei waehlbar, nicht auf 4 fest verdrahtet.
+        Obergrenzen für einen N-Basket-Split -- die Anzahl Baskets und ihre
+        Grenzen sind damit frei wählbar, nicht auf 4 fest verdrahtet.
         "Basket 1" ist immer der oberste (liquideste) Basket ohne Obergrenze,
-        "Basket N" der unterste (gerade noch die Eingangsschwelle erfuellend).
-        Fuer einen 2-Basket-Split reicht eine einzelne Grenze, z.B.
+        "Basket N" der unterste (gerade noch die Eingangsschwelle erfüllend).
+        Für einen 2-Basket-Split reicht eine einzelne Grenze, z.B.
         basket_upper_bounds=[250_000_000].
 
         Args:
             volume: Volumenwert (z.B. rolling_median_volume_24h_usd). NaN
-                (z.B. zu wenig Historie fuer den rollierenden Median) ergibt
+                (z.B. zu wenig Historie für den rollierenden Median) ergibt
                 keinen Basket.
             basket_upper_bounds: Aufsteigend sortierte Liste von N-1
                 Volumen-Obergrenzen.
 
         Returns:
-            "Basket {n}" mit n von 1 (hoechstes Volumen) bis N (niedrigstes),
+            "Basket {n}" mit n von 1 (höchstes Volumen) bis N (niedrigstes),
             oder None wenn volume NaN ist.
         """
         if pd.isna(volume):
@@ -890,18 +644,18 @@ class HelperFunctions:
         date_column: str,
         basket_upper_bounds: list[float],
     ) -> pd.DataFrame:
-        """Baut die Basket-Zuordnung fuer alle Assets an einem bestimmten Datum.
+        """Baut die Basket-Zuordnung für alle Assets an einem bestimmten Datum.
 
         Args:
             rolling_volume_df: Ausgabe von compute_rolling_volume_table, muss
                 eine Spalte "rolling_median_volume_24h_usd" enthalten.
-            selected_date: Datum, fuer das die Baskets gebaut werden.
+            selected_date: Datum, für das die Baskets gebaut werden.
             id_column: Spaltenname der Asset-ID.
             date_column: Spaltenname des Datums.
             basket_upper_bounds: siehe assign_volume_basket.
 
         Returns:
-            Zeilen von rolling_volume_df fuer selected_date mit neuer Spalte
+            Zeilen von rolling_volume_df für selected_date mit neuer Spalte
             "basket", absteigend nach rolling_median_volume_24h_usd sortiert.
             Assets ohne Basket (NaN-Volumen) werden entfernt.
         """
@@ -937,7 +691,7 @@ class HelperFunctions:
         """Vergleicht Basket-Zuordnungen zweier Daten (siehe build_volume_baskets).
 
         Args:
-            previous_basket_df: Basket-Zuordnung des frueheren Datums.
+            previous_basket_df: Basket-Zuordnung des früheren Datums.
             current_basket_df: Basket-Zuordnung des aktuellen Datums.
             id_column: Spaltenname der Asset-ID.
 
@@ -1014,11 +768,11 @@ class HelperFunctions:
         date_column: str,
         basket_upper_bounds: list[float],
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """Baut Basket-Zuordnungen fuer zwei Daten und vergleicht sie.
+        """Baut Basket-Zuordnungen für zwei Daten und vergleicht sie.
 
         Args:
             rolling_volume_df: siehe build_volume_baskets.
-            previous_date: frueheres Vergleichsdatum.
+            previous_date: früheres Vergleichsdatum.
             selected_date: aktuelles Datum.
             id_column: Spaltenname der Asset-ID.
             date_column: Spaltenname des Datums.
@@ -1063,7 +817,7 @@ class HelperFunctions:
         basket_upper_bounds: list[float],
         min_volume_24h_usd: float,
     ) -> list[str]:
-        """Baut lesbare Basket-Definitionen fuer eine gegebene Schwellenliste.
+        """Baut lesbare Basket-Definitionen für eine gegebene Schwellenliste.
 
         Args:
             basket_upper_bounds: siehe assign_volume_basket.
@@ -1108,27 +862,27 @@ class HelperFunctions:
         point_cloud_fn,
         dates: list,
     ) -> pd.DataFrame:
-        """Fuehrt die (teure) Clique-Discovery ueber viele Tage x Baskets aus.
+        """Führt die (teure) Clique-Discovery über viele Tage x Baskets aus.
 
         Gedacht zum EINMALIGEN Berechnen und Cachen (siehe
-        05_clique_cache.ipynb) statt bei jedem nachgelagerten Notebook
-        (Signal-Screening, spaeter Backtest) neu zu rechnen -- die eigentlich
+        04_clique_cache.ipynb) statt bei jedem nachgelagerten Notebook
+        (Signal-Screening, später Backtest) neu zu rechnen -- die eigentlich
         teure Arbeit ist hier drin (volle Vietoris-Rips/Persistenz-Berechnung
         pro Tag und Basket), alles danach (Feature-Berechnung, Forward-
         Returns) ist vergleichsweise billig und soll bei jeder neuen
-        Feature-Idee schnell neu laufen koennen, ohne diese Schleife zu
+        Feature-Idee schnell neu laufen können, ohne diese Schleife zu
         wiederholen.
 
         point_cloud_fn: dieselbe Signatur wie in
-        cloudvisualisation.build_persistent_cluster_widget (ohlcv_df,
+        src.clustering.plots.build_persistent_cluster_widget (ohlcv_df,
         universe_df, end_date, window_size_days, exclude_asset_ids) ->
-        dict|None -- HelperFunctions.build_point_cloud fuer die rohe Variante,
-        ein Wrapper um build_residual_point_cloud fuer die residualisierte
-        (siehe 03_pointclouds.ipynb / 04_residual_pointclouds.ipynb).
+        dict|None -- HelperFunctions.build_point_cloud für die rohe Variante,
+        ein Wrapper um build_residual_point_cloud für die residualisierte
+        (siehe 02_pointclouds.ipynb / 03_residual_pointclouds.ipynb).
 
         Returns:
-            DataFrame mit einer Zeile pro (Datum, Basket), an dem tatsaechlich
-            eine Clique gefunden wurde (kein Eintrag fuer Tage ohne Cluster --
+            DataFrame mit einer Zeile pro (Datum, Basket), an dem tatsächlich
+            eine Clique gefunden wurde (kein Eintrag für Tage ohne Cluster --
             Abwesenheit in dieser Tabelle IST die Information). Spalten:
             discovery_date, basket, asset_ids (list[int]), persistence, size,
             lookback_days.

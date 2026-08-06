@@ -6,15 +6,13 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
-from plotly.subplots import make_subplots
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
 from scipy.spatial.distance import squareform
 from sklearn.manifold import MDS
 from IPython.display import display, clear_output
-import math
 
-from helperfunctions import HelperFunctions
+from src.clustering.helpers import HelperFunctions
 
 # Manche Umgebungen (z.B. VS Code) erkennen den Default automatisch als
 # zusammengesetzten, "+"-getrennten Wert (z.B. "vscode+notebook"). In dem Fall
@@ -22,11 +20,11 @@ from helperfunctions import HelperFunctions
 # Figur erscheint mehrfach, auch ohne jede Interaktion. Nur den ersten Eintrag
 # behalten (die von Plotly selbst erkannte, zur Umgebung passende Wahl), statt
 # ihn durch einen fest einprogrammierten Renderer zu ersetzen, der in dieser
-# Umgebung evtl. gar nicht unterstuetzt wird (-> leerer Output).
+# Umgebung evtl. gar nicht unterstützt wird (-> leerer Output).
 if "+" in pio.renderers.default:
     pio.renderers.default = pio.renderers.default.split("+")[0]
-# "browser" oeffnet einen System-Browser-Prozess und blockiert/crasht den Kernel
-# bei headless nbconvert-Ausfuehrung -> stattdessen inline im Notebook rendern.
+# "browser" öffnet einen System-Browser-Prozess und blockiert/crasht den Kernel
+# bei headless nbconvert-Ausführung -> stattdessen inline im Notebook rendern.
 elif pio.renderers.default == "browser":
     pio.renderers.default = "notebook"
 
@@ -40,14 +38,14 @@ _DIVERGING_SCALE = [
     [1.0, "#7a1f1f"],
 ]
 _MARKER_COLOR = "#2a78d6"
-# Matplotlib-Aequivalent von _DIVERGING_SCALE (gleiche Stops, gleichmaessig verteilt
-# bei 0/0.25/0.5/0.75/1.0) fuer Heatmaps ausserhalb von Plotly.
+# Matplotlib-Äquivalent von _DIVERGING_SCALE (gleiche Stops, gleichmässig verteilt
+# bei 0/0.25/0.5/0.75/1.0) für Heatmaps ausserhalb von Plotly.
 _DIVERGING_CMAP = LinearSegmentedColormap.from_list(
     "diverging_blue_red", [stop[1] for stop in _DIVERGING_SCALE]
 )
 
 # Kategoriale Referenzpalette (dataviz-Skill), feste Reihenfolge, nie zyklisch neu
-# zugewiesen. Slot 0 ist reserviert fuer "noch nicht verschmolzen / Singleton" (grau).
+# zugewiesen. Slot 0 ist reserviert für "noch nicht verschmolzen / Singleton" (grau).
 _CATEGORICAL = [
     "#2a78d6", "#eb6834", "#1baf7a", "#eda100",
     "#e87ba4", "#008300", "#4a3aa7", "#e34948",
@@ -57,120 +55,14 @@ _INK_MUTED = "#898781"
 _INK_SECONDARY = "#52514e"
 
 
-def plot_anchor_vs_others_plotly(returns_window, anchor):
-    others = [c for c in returns_window.columns if c != anchor]
-    n_cols = 5
-    n_rows = math.ceil(len(others) / n_cols)
-
-    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=others)
-
-    for i, other in enumerate(others):
-        row, col = divmod(i, n_cols)
-        corr = returns_window[anchor].corr(returns_window[other])
-        fig.add_trace(
-            go.Scatter(
-                x=returns_window[anchor], y=returns_window[other],
-                mode="markers", marker={"size": 4},
-                name=f"{other} (r={corr:.2f})",
-            ),
-            row=row + 1, col=col + 1,
-        )
-
-    fig.update_layout(height=250 * n_rows, showlegend=False, title=f"{anchor} vs. alle Assets im Window")
-    fig.show()
-
-
-def plot_point_cloud_3d_interactive(point_cloud, asset_symbols, timestamps=None, color_by_x=True):
-    """Interaktiver 3D-Scatter der Point Cloud mit frei wählbaren Achsen-Assets.
-
-    Drei Dropdowns wählen, welches Asset auf X/Y/Z abgebildet wird, sodass man
-    durch die n-dimensionale Wolke "wandern" kann, indem man die Achsen-
-    Zuordnung wechselt. Plotly liefert Rotieren/Zoomen/Pan nativ im Notebook.
-
-    Args:
-        point_cloud: ndarray der Form (n_points, n_assets), z.B. result["point_cloud"].
-        asset_symbols: Liste der Asset-Symbole in Spaltenreihenfolge (Länge n_assets).
-        timestamps: Optionaler Zeitindex (Länge n_points) für Hover-Text.
-        color_by_x: Falls True, werden Punkte nach ihrem Wert auf der X-Achse
-            eingefärbt (diverging blue<->red, zentriert auf 0). Sonst einheitliche Farbe.
-    """
-    n_points, n_dims = point_cloud.shape
-    if len(asset_symbols) != n_dims:
-        raise ValueError(f"asset_symbols hat {len(asset_symbols)} Einträge, point_cloud aber {n_dims} Dimensionen.")
-
-    hover_ts = None
-    if timestamps is not None:
-        hover_ts = [str(t) for t in timestamps]
-
-    default_x = asset_symbols[0]
-    default_y = asset_symbols[1] if n_dims > 1 else asset_symbols[0]
-    default_z = asset_symbols[2] if n_dims > 2 else asset_symbols[0]
-
-    x_dropdown = widgets.Dropdown(options=asset_symbols, value=default_x, description="X-Achse:")
-    y_dropdown = widgets.Dropdown(options=asset_symbols, value=default_y, description="Y-Achse:")
-    z_dropdown = widgets.Dropdown(options=asset_symbols, value=default_z, description="Z-Achse:")
-    out = widgets.Output()
-
-    def render(*_change):
-        x_asset, y_asset, z_asset = x_dropdown.value, y_dropdown.value, z_dropdown.value
-        xi, yi, zi = asset_symbols.index(x_asset), asset_symbols.index(y_asset), asset_symbols.index(z_asset)
-        x, y, z = point_cloud[:, xi], point_cloud[:, yi], point_cloud[:, zi]
-
-        if color_by_x:
-            bound = float(np.max(np.abs(x))) or 1.0
-            marker = {
-                "size": 3, "color": x, "colorscale": _DIVERGING_SCALE,
-                "cmin": -bound, "cmax": bound,
-                "colorbar": {"title": f"{x_asset}<br>Return"},
-                "opacity": 0.6,
-            }
-        else:
-            marker = {"size": 3, "color": _MARKER_COLOR, "opacity": 0.6}
-
-        fig = go.Figure(data=[go.Scatter3d(
-            x=x, y=y, z=z,
-            mode="markers",
-            marker=marker,
-            text=hover_ts,
-            hovertemplate=(
-                f"{x_asset}: %{{x:.4%}}<br>{y_asset}: %{{y:.4%}}<br>{z_asset}: %{{z:.4%}}"
-                + ("<br>%{text}" if hover_ts is not None else "")
-                + "<extra></extra>"
-            ),
-        )])
-        fig.update_layout(
-            scene={
-                "xaxis_title": f"{x_asset} Return",
-                "yaxis_title": f"{y_asset} Return",
-                "zaxis_title": f"{z_asset} Return",
-            },
-            title=f"3D Point Cloud: {x_asset} / {y_asset} / {z_asset}  ({n_points} Punkte)",
-            height=700,
-            margin={"l": 0, "r": 0, "b": 0, "t": 40},
-        )
-        # Eigener Output + explizites clear_output(wait=True) VOR jedem neuen Plot:
-        # go.Figure().show() allein ersetzt die vorherige Ausgabe nicht zuverlaessig
-        # innerhalb von widgets.interact (Plotly+ipywidgets in VS Code) -> ohne das
-        # haengt sich bei jedem Dropdown-Wechsel eine weitere Figur an die Zelle an.
-        with out:
-            clear_output(wait=True)
-            fig.show()
-
-    for dropdown in (x_dropdown, y_dropdown, z_dropdown):
-        dropdown.observe(render, names="value")
-
-    display(widgets.VBox([widgets.HBox([x_dropdown, y_dropdown, z_dropdown]), out]))
-    render()
-
-
 def _compute_vr_layout(distance_matrix):
-    """MDS-2D-Layout + Single-Linkage-Baum, wiederverwendbar fuer Skelett-Plots.
+    """MDS-2D-Layout + Single-Linkage-Baum, wiederverwendbar für Skelett-Plots.
 
     Ausgelagert aus plot_vietoris_rips_epsilon_slider, damit sowohl das
-    eigenstaendige Slider-Widget als auch build_persistent_cluster_widget
-    (das sein eigenes epsilon ueber einen gemeinsamen Output-Bereich statt
-    ueber ein zusaetzliches, verschachteltes Output-Widget steuert) dieselbe
-    MDS-Berechnung nutzen koennen, ohne sie zu duplizieren.
+    eigenständige Slider-Widget als auch build_persistent_cluster_widget
+    (das sein eigenes epsilon über einen gemeinsamen Output-Bereich statt
+    über ein zusätzliches, verschachteltes Output-Widget steuert) dieselbe
+    MDS-Berechnung nutzen können, ohne sie zu duplizieren.
     """
     coords = MDS(
         n_components=2, dissimilarity="precomputed", random_state=0, normalized_stress=False
@@ -185,14 +77,14 @@ def _build_vr_skeleton_figure(
 ):
     """Baut die reine Vietoris-Rips-1-Skelett-Figur (keine Anzeige/Widgets).
 
-    Siehe plot_vietoris_rips_epsilon_slider fuer die Bedeutung der Argumente.
+    Siehe plot_vietoris_rips_epsilon_slider für die Bedeutung der Argumente.
     coords/z kommen von _compute_vr_layout (einmal pro Fenster berechnet,
-    nicht bei jeder epsilon-Aenderung neu).
+    nicht bei jeder epsilon-Änderung neu).
 
     Args:
-        width, height: Feste Pixel-Groesse der Figure. width=None (Default)
-            laesst Plotly die Breite responsiv bestimmen; explizit gesetzt,
-            z.B. um dieselbe Groesse wie ein danebenstehendes Matplotlib-
+        width, height: Feste Pixel-Grösse der Figure. width=None (Default)
+            lässt Plotly die Breite responsiv bestimmen; explizit gesetzt,
+            z.B. um dieselbe Grösse wie ein danebenstehendes Matplotlib-
             Dendrogramm zu erzwingen (siehe build_persistent_cluster_widget).
     """
     n = len(asset_symbols)
@@ -271,25 +163,25 @@ def plot_vietoris_rips_epsilon_slider(
     Zeigt direkt das Geburts-/Verschmelzungsverhalten der H0-Features:
     bei epsilon=0 ist jedes Asset isoliert (n Cluster), mit wachsendem epsilon verschmelzen
     Cliquen, bis am Ende alles ein einziger Cluster ist. Die Knotenposition kommt aus MDS
-    auf der Korrelationsdistanzmatrix (Assets mit aehnlichem Return-Profil liegen nah beieinander),
-    die Kanten sind der eigentliche Vietoris-Rips-1-Skelett bei der gewaehlten Schwelle.
+    auf der Korrelationsdistanzmatrix (Assets mit ähnlichem Return-Profil liegen nah beieinander),
+    die Kanten sind der eigentliche Vietoris-Rips-1-Skelett bei der gewählten Schwelle.
 
-    Eigenstaendiges Widget mit eigenem Slider + Output. Wird aktuell NICHT von
+    Eigenständiges Widget mit eigenem Slider + Output. Wird aktuell NICHT von
     build_persistent_cluster_widget verwendet (das Skelett wurde dort entfernt),
-    bleibt aber fuer eigenstaendige Exploration in einer einzelnen Zelle nutzbar.
+    bleibt aber für eigenständige Exploration in einer einzelnen Zelle nutzbar.
 
     Args:
         distance_matrix: (n_assets, n_assets) symmetrische Korrelationsdistanzmatrix,
             z.B. helper.correlation_distance(returns_df). Diagonale = 0.
         asset_symbols: Liste der Asset-Symbole, Reihenfolge passend zu distance_matrix.
         max_edge_length: Oberes Ende des epsilon-Sliders. Default: max(distance_matrix).
-        min_cluster_size: Cluster unterhalb dieser Groesse werden als Singletons (grau)
+        min_cluster_size: Cluster unterhalb dieser Grösse werden als Singletons (grau)
             statt mit einer Cluster-Farbe dargestellt.
         show_radius: Falls True, wird um jeden Knoten ein Kreis mit Radius=epsilon/2
-            gezeichnet -- beruehren sich zwei Kreise, liegt eine Kante vor. Rein
+            gezeichnet -- berühren sich zwei Kreise, liegt eine Kante vor. Rein
             illustrativ: MDS bildet die Distanzmatrix nur approximativ in 2D ab
             (Stress > 0 bei > 2 "wirklichen" Dimensionen), die Kreise zeigen also
-            die ungefaehre, nicht die exakte Nachbarschaftsschwelle.
+            die ungefähre, nicht die exakte Nachbarschaftsschwelle.
     """
     n = len(asset_symbols)
     if distance_matrix.shape != (n, n):
@@ -314,8 +206,8 @@ def plot_vietoris_rips_epsilon_slider(
             min_cluster_size=min_cluster_size, show_radius=show_radius,
         )
         # Eigener Output + explizites clear_output(wait=True) VOR jedem neuen Plot:
-        # go.Figure().show() allein ersetzt die vorherige Ausgabe nicht zuverlaessig
-        # innerhalb von widgets.interact -> ohne das haengt sich bei jedem Schritt
+        # go.Figure().show() allein ersetzt die vorherige Ausgabe nicht zuverlässig
+        # innerhalb von widgets.interact -> ohne das hängt sich bei jedem Schritt
         # des Sliders eine weitere Figur an die Zelle an, statt sie zu ersetzen.
         with out:
             clear_output(wait=True)
@@ -342,37 +234,37 @@ def plot_correlation_heatmap(
 ):
     """Heatmap einer (n_assets, n_assets) Matrix mit optionalen Zahlen pro Zelle.
 
-    Generische Heatmap-Funktion fuer sowohl die Korrelationsmatrix (Werte in
+    Generische Heatmap-Funktion für sowohl die Korrelationsmatrix (Werte in
     [-1, 1], diverging Farbskala zentriert auf 0, Default) als auch die
-    Korrelationsdistanzmatrix (Werte in [0, sqrt(2)] -- dafuer value_range und
-    cmap explizit uebergeben) -- ersetzt die zuvor in 03_pointclouds.ipynb /
-    04_residual_pointclouds.ipynb duplizierten ad-hoc imshow-Bloecke ohne
+    Korrelationsdistanzmatrix (Werte in [0, sqrt(2)] -- dafür value_range und
+    cmap explizit übergeben) -- ersetzt die zuvor in 02_pointclouds.ipynb /
+    03_residual_pointclouds.ipynb duplizierten ad-hoc imshow-Blöcke ohne
     Zahlen-Annotation.
 
     Args:
         matrix: (n_assets, n_assets) symmetrische Matrix.
         asset_symbols: Liste der Asset-Symbole, Reihenfolge passend zu matrix.
-        value_range: (vmin, vmax) fuer die Farbskala. Default (-1, 1) fuer
-            Korrelationen; fuer Distanzen z.B. (0, sqrt(2)) uebergeben.
+        value_range: (vmin, vmax) für die Farbskala. Default (-1, 1) für
+            Korrelationen; für Distanzen z.B. (0, sqrt(2)) übergeben.
         cmap: Matplotlib-Colormap oder Name. Default: diverging blue<->red
-            (siehe _DIVERGING_SCALE), passend fuer um 0 zentrierte Werte.
+            (siehe _DIVERGING_SCALE), passend für um 0 zentrierte Werte.
         colorbar_label: Beschriftung der Farbskala.
         title: Optionaler Titel. Default generisch mit Asset-Anzahl.
         annotate: Falls True, wird jede Zelle mit ihrem Wert beschriftet.
             Wird automatisch deaktiviert, wenn mehr als max_annotated_assets
             Assets vorhanden sind (sonst unleserlich).
-        annotate_fmt: Format-String fuer die Zellen-Beschriftung.
-        annotate_fontsize: Schriftgroesse der Zellen-Beschriftung. Default (None)
+        annotate_fmt: Format-String für die Zellen-Beschriftung.
+        annotate_fontsize: Schriftgrösse der Zellen-Beschriftung. Default (None)
             skaliert automatisch mit der Asset-Anzahl (kleinere Schrift bei
-            mehr Assets), damit die Zahlen bei vielen Assets nicht ueberlappen,
+            mehr Assets), damit die Zahlen bei vielen Assets nicht überlappen,
             bei wenigen Assets aber gut lesbar gross bleiben.
         max_annotated_assets: Schwelle, ab der annotate automatisch False wird.
-        figsize: Optionale (Breite, Hoehe) in Zoll. Ignoriert, falls ax uebergeben wird.
+        figsize: Optionale (Breite, Höhe) in Zoll. Ignoriert, falls ax übergeben wird.
         ax: Optionale matplotlib Axes zum Zeichnen (z.B. eine in Tkinter
             eingebettete FigureCanvasTkAgg-Achse). Falls None, wird eine neue
             Figure erstellt.
         show: Falls True (Default) und ax None ist, wird plt.show() aufgerufen.
-            Beim Einbetten (ax uebergeben) sollte dies auf False gesetzt werden.
+            Beim Einbetten (ax übergeben) sollte dies auf False gesetzt werden.
 
     Returns:
         (fig, ax): die verwendete Figure und Axes.
@@ -403,7 +295,7 @@ def plot_correlation_heatmap(
     if annotate and n <= max_annotated_assets:
         # Skaliert von ~11pt (wenige Assets) bis ~6pt (nahe max_annotated_assets),
         # damit die Zahlen bei kleinen Matrizen gut lesbar sind und bei grossen
-        # Matrizen trotzdem nicht ueberlappen.
+        # Matrizen trotzdem nicht überlappen.
         fontsize = annotate_fontsize if annotate_fontsize is not None else max(6.0, min(11.0, 220.0 / n))
         for i in range(n):
             for j in range(n):
@@ -417,94 +309,11 @@ def plot_correlation_heatmap(
             plt.show()
             # Ohne explizites close() bleibt die Figure im globalen pyplot-Zustand
             # registriert -> wird sie innerhalb eines ipywidgets.Output erzeugt
-            # (with out: ...), fuehrt das beim Verlassen des Blocks zu einem
+            # (with out: ...), führt das beim Verlassen des Blocks zu einem
             # ZWEITEN, doppelten Rendering derselben Figur.
             plt.close(fig)
 
     return fig, ax
-
-
-def plot_dendrogram(
-    distance_matrix, asset_symbols, color_threshold=None, figsize=None,
-    ax=None, show=True, extra_hlines=None, y_max=None,
-):
-    """Single-Linkage-Dendrogramm der Assets, optional mit Schwellenlinie(n).
-
-    Baut den Cluster-Baum aus der Korrelationsdistanzmatrix auf: jedes Asset
-    startet als eigenes Blatt, Verschmelzungen erfolgen entlang der y-Achse
-    (Korrelationsdistanz). Ein niedriger Merge-Punkt bedeutet, dass zwei
-    Assets/Cliquen bereits bei kleiner Distanz zusammengehoeren, ein hoher
-    Merge-Punkt zeigt eine spaete, schwaechere Verbindung.
-
-    Args:
-        distance_matrix: (n_assets, n_assets) symmetrische Korrelationsdistanzmatrix.
-        asset_symbols: Liste der Asset-Symbole, Reihenfolge passend zu distance_matrix.
-        color_threshold: Falls gesetzt, wird bei dieser Distanz eine horizontale
-            Schwellenlinie eingezeichnet und Aeste unterhalb der Schwelle farbig
-            (statt grau) dargestellt, analog zu scipy's eigenem color_threshold.
-        figsize: Optionale (Breite, Hoehe) in Zoll. Default skaliert mit der Anzahl Assets.
-            Ignoriert, falls ax uebergeben wird.
-        ax: Optionale matplotlib Axes zum Zeichnen (z.B. eine in Tkinter eingebettete
-            FigureCanvasTkAgg-Achse). Falls None, wird eine neue Figure erstellt.
-        show: Falls True (Default) und ax None ist, wird plt.show() aufgerufen.
-            Beim Einbetten (ax uebergeben) sollte dies auf False gesetzt werden.
-        extra_hlines: Optionale Liste von (label, value, color)-Tupeln fuer
-            zusaetzliche, rein visuelle Referenzlinien (z.B. sqrt(2) als
-            theoretische "keine Korrelation"-Grenze), unabhaengig vom
-            color_threshold, der weiterhin nur die scipy-Aeste-Faerbung steuert.
-        y_max: Falls gesetzt, wird die y-Achse fest auf [0, y_max] statt auf den
-            per-Fenster-Merge-Bereich skaliert -- damit bleibt die Achse beim
-            Durchblaettern verschiedener Daten/Fenster vergleichbar, statt sich
-            pro Fenster neu anzupassen.
-    """
-    n = len(asset_symbols)
-    if distance_matrix.shape != (n, n):
-        raise ValueError(f"distance_matrix hat Shape {distance_matrix.shape}, erwartet ({n}, {n}).")
-
-    z = linkage(squareform(distance_matrix, checks=False), method="single")
-
-    owns_figure = ax is None
-    if owns_figure:
-        if figsize is None:
-            figsize = (max(10, n * 0.35), 6)
-        fig, ax = plt.subplots(figsize=figsize)
-    else:
-        fig = ax.figure
-
-    dendrogram(
-        z, labels=asset_symbols, ax=ax,
-        color_threshold=color_threshold,
-        above_threshold_color=_INK_MUTED,
-    )
-
-    has_legend_entries = False
-    if color_threshold is not None:
-        ax.axhline(y=color_threshold, color=_CATEGORICAL[7], linestyle="--", linewidth=1.2,
-                   label=f"Merge Scale epsilon* = {color_threshold:.4f}")
-        has_legend_entries = True
-
-    for label, value, color in extra_hlines or []:
-        ax.axhline(y=value, color=color, linestyle=":", linewidth=1.2,
-                   label=f"{label} ({value:.4f})")
-        has_legend_entries = True
-
-    if has_legend_entries:
-        ax.legend()
-
-    ax.set_ylabel("Korrelationsdistanz (epsilon)")
-    ax.set_title(f"Single-Linkage-Dendrogramm ({n} Assets)")
-    ax.tick_params(axis="x", labelrotation=90, labelsize=8)
-
-    if y_max is not None:
-        ax.set_ylim(0, y_max)
-
-    if owns_figure:
-        fig.tight_layout()
-        if show:
-            plt.show()
-            plt.close(fig)  # siehe Kommentar in plot_correlation_heatmap
-
-    return z
 
 
 def plot_dendrogram_with_clusters(
@@ -512,37 +321,37 @@ def plot_dendrogram_with_clusters(
     persistence_threshold=None, epsilon_cap=None,
     figsize=None, ax=None, show=True, y_max=None, dpi=None,
 ):
-    """Single-Linkage-Dendrogramm mit eingefaerbten, hierarchie-bereinigten Clustern.
+    """Single-Linkage-Dendrogramm mit eingefärbten, hierarchie-bereinigten Clustern.
 
-    Im Unterschied zu plot_dendrogram (ein einziger globaler Hoehen-Schnitt) werden
+    Im Unterschied zu plot_dendrogram (ein einziger globaler Höhen-Schnitt) werden
     hier die von HelperFunctions.get_persistent_clusters gefundenen, jeweils an
-    ihrer eigenen Skala geschnittenen Cliquen eingefaerbt: jeder Ast INNERHALB
+    ihrer eigenen Skala geschnittenen Cliquen eingefärbt: jeder Ast INNERHALB
     eines gefundenen Clusters (inkl. seiner eigenen Merge-Linie) bekommt dessen
     Farbe, alles ausserhalb (Vorfahren, die selbst nicht mehr persistent genug
-    waren, und Aeste ohne jeden legitimen Cluster) bleibt grau. Assets, die zu
-    keinem Cluster gehoeren, erscheinen so weiterhin vollstaendig im Baum, nur
-    ungefaerbt -- alle Assets des Baskets sind immer im Bild.
+    waren, und Äste ohne jeden legitimen Cluster) bleibt grau. Assets, die zu
+    keinem Cluster gehören, erscheinen so weiterhin vollständig im Baum, nur
+    ungefärbt -- alle Assets des Baskets sind immer im Bild.
 
     Args:
         distance_matrix: (n_assets, n_assets) symmetrische Korrelationsdistanzmatrix.
         asset_symbols: Liste der Asset-Symbole, Reihenfolge passend zu distance_matrix.
         clusters: Liste von Cluster-Dicts wie von get_persistent_clusters
-            zurueckgegeben (braucht die Schluessel "node_id" und "size").
+            zurückgegeben (braucht die Schlüssel "node_id" und "size").
         z: Optionale, bereits berechnete Linkage-Matrix (von get_persistent_clusters
-            zurueckgegeben) -- vermeidet doppelte Berechnung. Falls None, wird sie
+            zurückgegeben) -- vermeidet doppelte Berechnung. Falls None, wird sie
             neu aus distance_matrix berechnet.
-        persistence_threshold: Nur fuer die Titelzeile/Legende.
-        epsilon_cap: Falls gesetzt, gestrichelte Referenzlinie bei dieser Hoehe
+        persistence_threshold: Nur für die Titelzeile/Legende.
+        epsilon_cap: Falls gesetzt, gestrichelte Referenzlinie bei dieser Höhe
             (obere Grenze der Cluster-Suche).
         figsize, ax, show: siehe plot_dendrogram.
-        dpi: Falls gesetzt, feste Aufloesung fuer figsize -> Pixel-Groesse
-            (figsize_zoll * dpi), unabhaengig von rcParams -- z.B. um exakt
-            dieselbe Pixel-Groesse wie eine danebenstehende Plotly-Figur zu
+        dpi: Falls gesetzt, feste Auflösung für figsize -> Pixel-Grösse
+            (figsize_zoll * dpi), unabhängig von rcParams -- z.B. um exakt
+            dieselbe Pixel-Grösse wie eine danebenstehende Plotly-Figur zu
             erzwingen (siehe build_persistent_cluster_widget).
         y_max: Falls gesetzt, feste y-Achse [0, y_max] statt Auto-Skalierung auf
-            den tatsaechlichen Merge-Bereich dieses Fensters -- damit bleibt die
+            den tatsächlichen Merge-Bereich dieses Fensters -- damit bleibt die
             Achse zwischen Fenstern/Baskets vergleichbar und epsilon_cap landet
-            nicht zufaellig am oberen Bildrand.
+            nicht zufällig am oberen Bildrand.
 
     Returns:
         Die verwendete scipy-Linkage-Matrix z.
@@ -556,7 +365,7 @@ def plot_dendrogram_with_clusters(
 
     # children-Map aus z rekonstruieren (dieselbe Struktur wie in
     # HelperFunctions.get_persistent_clusters), um pro Cluster den kompletten
-    # Teilbaum unterhalb seines node_id einzufaerben.
+    # Teilbaum unterhalb seines node_id einzufärben.
     children = {}
     for row_idx, (c1, c2, _dist, _count) in enumerate(z):
         children[n + row_idx] = (int(c1), int(c2))
@@ -622,121 +431,23 @@ def plot_dendrogram_with_clusters(
     return z
 
 
-def _build_h0_barcode_figure(distance_matrix, asset_symbols, *, x_max=None, width=None, height=None):
-    """Baut die reine Barcode-Figur (keine Anzeige) -- siehe plot_h0_persistence_barcode.
-
-    Ausgelagert analog zu _build_vr_skeleton_figure, damit build_persistent_cluster_widget
-    Breite/Hoehe explizit setzen kann (feste Groesse neben dem Dendrogramm), ohne die
-    eigenstaendige Nutzung von plot_h0_persistence_barcode zu veraendern.
-
-    Returns:
-        (fig, z, n_rows): Plotly-Figure, Linkage-Matrix, Anzahl Balken.
-    """
-    n = len(asset_symbols)
-    if distance_matrix.shape != (n, n):
-        raise ValueError(f"distance_matrix hat Shape {distance_matrix.shape}, erwartet ({n}, {n}).")
-
-    z = linkage(squareform(distance_matrix, checks=False), method="single")
-
-    # Fuer jeden Cluster (0..n-1 = urspruengliche Assets, n.. = durch Merges
-    # entstandene Cluster) merken wir uns Asset-Mitglieder UND birth-Distanz.
-    # Die Original-Assets existieren von Anfang an -> birth = 0.0.
-    members = {i: [asset_symbols[i]] for i in range(n)}
-    birth = {i: 0.0 for i in range(n)}
-
-    rows = []
-    for row_idx, (c1, c2, dist, _count) in enumerate(z):
-        c1, c2 = int(c1), int(c2)
-        merged = members[c1] + members[c2]
-        cluster_id = n + row_idx
-        members[cluster_id] = merged
-        birth[cluster_id] = float(dist)
-
-        # c1 und c2 sterben genau jetzt (sie verschmelzen zu cluster_id) -> ihr
-        # eigener Lebensdauer-Balken laeuft von ihrem eigenen birth bis hier.
-        for c in (c1, c2):
-            rows.append({
-                "birth": birth[c], "death": float(dist),
-                "size": len(members[c]), "assets": members[c], "row": row_idx,
-            })
-
-    rows.sort(key=lambda r: r["death"])
-
-    fig = go.Figure()
-    bound = x_max if x_max is not None else (max((r["death"] for r in rows), default=1.0) or 1.0)
-    for y, r in enumerate(rows):
-        color = _CATEGORICAL[min(r["size"] - 2, len(_CATEGORICAL) - 1)] if r["size"] >= 2 else _SINGLETON_GREY
-        fig.add_trace(go.Scatter(
-            x=[r["birth"], r["death"]], y=[y, y], mode="lines",
-            line={"width": 8, "color": color},
-            hovertemplate=(
-                f"Birth: {r['birth']:.4f}<br>Death: {r['death']:.4f}<br>"
-                f"Persistenz: {r['death'] - r['birth']:.4f}<br>Groesse: {r['size']} Assets<br>"
-                f"Assets: {', '.join(r['assets'][:12])}{'...' if len(r['assets']) > 12 else ''}"
-                "<extra></extra>"
-            ),
-            showlegend=False,
-        ))
-
-    layout_kwargs = {
-        "title": f"Cluster-Lebensdauer-Barcode ({len(rows)} Cluster-Intervalle)",
-        "xaxis": {"title": "Korrelationsdistanz (epsilon)", "range": [0, bound * 1.05]},
-        "yaxis": {"title": "Cluster-Intervall (sortiert nach Todeszeitpunkt)", "showticklabels": False},
-        "height": height if height is not None else max(400, 18 * len(rows)),
-        "margin": {"l": 40, "r": 20, "t": 50, "b": 40},
-        "plot_bgcolor": "#fcfcfb",
-    }
-    if width is not None:
-        layout_kwargs["width"] = width
-    fig.update_layout(**layout_kwargs)
-    return fig, z, len(rows)
-
-
-def plot_h0_persistence_barcode(distance_matrix, asset_symbols, *, x_max=None):
-    """Cluster-Lebensdauer-Barcode: ein Balken pro Cluster von birth bis death=epsilon.
-
-    Jede Zeile der linkage-Matrix ist ein Merge-Event: zwei Cluster verschmelzen bei
-    epsilon=dist zu einem neuen, groesseren Cluster. Dieser neue Cluster wird an genau
-    dieser Distanz "geboren" (birth=dist des Merges, der ihn erzeugt hat) und "stirbt"
-    wieder, wenn er seinerseits mit einem anderen Cluster verschmilzt (death=dist des
-    naechsten Merges, an dem er beteiligt ist). Die urspruenglichen Einzel-Assets (die
-    Blaetter des Baums) existieren dagegen von Anfang an, ihr birth ist daher 0.
-    Balkenlaenge = Persistenz = wie lange dieser konkrete Cluster als eigenstaendige
-    Einheit bestand, bevor er in einen groesseren Cluster aufging. Lange Balken mit
-    vielen beteiligten Assets sind die strukturell stabilen, interessanten Cliquen.
-
-    Args:
-        distance_matrix: (n_assets, n_assets) symmetrische Korrelationsdistanzmatrix.
-        asset_symbols: Liste der Asset-Symbole, Reihenfolge passend zu distance_matrix.
-        x_max: Falls gesetzt, feste x-Achse [0, x_max] statt Auto-Skalierung auf
-            die groesste beobachtete Death-Distanz dieses Fensters -- damit bleibt
-            die Achse zwischen Fenstern/Baskets vergleichbar (z.B. x_max=2.0, der
-            theoretische Maximalwert der Korrelationsdistanz).
-    """
-    fig, z, n_rows = _build_h0_barcode_figure(distance_matrix, asset_symbols, x_max=x_max)
-    fig.show()
-    print(f"Anzahl Cluster-Intervalle: {n_rows}")
-    return z
-
-
 def plot_h0_barcode_on_ax(distance_matrix, asset_symbols, ax, *, x_max=None):
-    """Zeichnet denselben H0-Persistenz-Barcode als Matplotlib statt Plotly.
+    """Zeichnet den H0-Persistenz-Barcode als Matplotlib-Plot.
 
-    Gleiche Balken-Semantik wie plot_h0_persistence_barcode (siehe dortige
-    Docstring), aber auf eine uebergebene Matplotlib-Axes gezeichnet -- damit
-    kann der Barcode z.B. als zweites Panel in derselben Figure wie das
-    Dendrogramm liegen (ein gemeinsamer plt.show()-Aufruf). Das garantiert
-    dasselbe Resize-Verhalten wie die Korrelations-/Distanz-Heatmap (die
-    bereits nachweislich sauber sowohl horizontal als auch vertikal mit dem
-    Notebook-Fenster mitskaliert), waehrend eine separate Plotly-Figur dieses
-    Verhalten in manchen Notebook-Frontends nicht zuverlaessig zeigt. Preis:
-    keine interaktiven Hover-Tooltips mehr (nur bei plot_h0_persistence_barcode).
+    Ein Balken pro Cluster von birth bis death=epsilon (siehe
+    build_persistent_cluster_widget), auf eine übergebene Matplotlib-Axes
+    gezeichnet -- damit kann der Barcode z.B. als zweites Panel in derselben
+    Figure wie das Dendrogramm liegen (ein gemeinsamer plt.show()-Aufruf).
+    Das garantiert dasselbe Resize-Verhalten wie die Korrelations-/Distanz-
+    Heatmap (die bereits nachweislich sauber sowohl horizontal als auch
+    vertikal mit dem Notebook-Fenster mitskaliert).
 
     Args:
         distance_matrix: (n_assets, n_assets) symmetrische Korrelationsdistanzmatrix.
         asset_symbols: Liste der Asset-Symbole, Reihenfolge passend zu distance_matrix.
         ax: Matplotlib-Axes zum Zeichnen.
-        x_max: siehe plot_h0_persistence_barcode.
+        x_max: Falls gesetzt, feste x-Achse [0, x_max] statt Auto-Skalierung auf
+            die grösste beobachtete Death-Distanz dieses Fensters.
 
     Returns:
         Anzahl gezeichneter Balken (int).
@@ -786,50 +497,49 @@ def build_persistent_cluster_widget(
 ):
     """Interaktiver Tab-Explorer: pro Basket Lookback/Datum/Schwellen einstellbar,
     darunter Korrelations- und Distanz-Heatmap, Vietoris-Rips-Skelett, hierarchie-
-    bereinigtes Dendrogramm und Persistenz-Barcode fuer das aktuell gewaehlte Fenster.
+    bereinigtes Dendrogramm und Persistenz-Barcode für das aktuell gewählte Fenster.
 
-    Ersetzt den frueheren Single-Height-Schnitt (get_clusters_at_scale /
-    "groesste Gruppe nehmen") durch HelperFunctions.get_persistent_clusters:
-    der EINE global persistenteste Knoten pro Fenster, sofern er die Schwelle
-    schafft (siehe dortige Docstring fuer die genaue Logik).
+    Nutzt HelperFunctions.get_persistent_clusters: der EINE global
+    persistenteste Knoten pro Fenster, sofern er die Schwelle schafft
+    (siehe dortige Docstring für die genaue Logik).
 
     Args:
         ohlcv_df, universe_df: siehe HelperFunctions.build_point_cloud.
         rolling_volume_df: Ausgabe von HelperFunctions.compute_rolling_volume_table.
-        id_to_symbol: dict asset_id -> Symbol (fuer Anzeige/Achsenbeschriftung).
+        id_to_symbol: dict asset_id -> Symbol (für Anzeige/Achsenbeschriftung).
         id_column, date_column: Spaltennamen in universe_df/rolling_volume_df.
         basket_labels: Liste der Basket-Labels (z.B. ["Basket 1", "Basket 2"]),
             ein Tab pro Label.
         basket_upper_bounds: siehe HelperFunctions.assign_volume_basket.
         excluded_ids: Set von Asset-IDs, die generell ausgeschlossen werden
-            (z.B. Stablecoins), zusaetzlich zur Basket-Filterung.
-        data_min, data_max: datetime.date-Grenzen der verfuegbaren OHLCV-Daten.
+            (z.B. Stablecoins), zusätzlich zur Basket-Filterung.
+        data_min, data_max: datetime.date-Grenzen der verfügbaren OHLCV-Daten.
         default_lookback_days: Anfangswert des Lookback-Sliders (Tage). Entweder
-            eine einzelne Zahl (fuer alle Baskets gleich) oder ein dict
-            {basket_label: Tage} fuer kalibrierte, basketspezifische Werte
+            eine einzelne Zahl (für alle Baskets gleich) oder ein dict
+            {basket_label: Tage} für kalibrierte, basketspezifische Werte
             (z.B. BEST_LOOKBACK aus Abschnitt 5) -- fehlt ein Label im dict,
-            wird auf 30 zurueckgefallen.
+            wird auf 30 zurückgefallen.
         max_lookback_days: Oberes Ende des Lookback-Sliders.
         default_persistence_threshold: Anfangswert der Persistenz-Schwelle.
             Wie default_lookback_days entweder eine Zahl oder ein dict
             {basket_label: Schwelle} (z.B. BEST_THRESHOLD aus Abschnitt 5).
         default_epsilon_cap: Anfangswert des Epsilon-Caps. Default (None) -> 1.0
-            (einer der beiden PDF-Beispielwerte fuer max_edge_length, siehe
+            (einer der beiden PDF-Beispielwerte für max_edge_length, siehe
             HelperFunctions.get_persistent_clusters).
         default_date: Anfangsdatum (datetime.date). Default (None) -> data_max.
         point_cloud_fn: Callable mit Keyword-Argumenten (ohlcv_df, universe_df,
             end_date, window_size_days, exclude_asset_ids), das ein Dict im
-            Format von HelperFunctions.build_point_cloud zurueckgibt (oder
+            Format von HelperFunctions.build_point_cloud zurückgibt (oder
             None). Default (None) -> HelperFunctions.build_point_cloud selbst.
-            Austauschbar, um z.B. residualisierte Punktwolken einzuhaengen
+            Austauschbar, um z.B. residualisierte Punktwolken einzuhängen
             (siehe HelperFunctions.build_residual_point_cloud in
-            04_residual_pointclouds.ipynb) -- window_size_days entspricht dann
-            dem topologischen Lookback, waehrend das (laengere, feste)
-            Regressionsfenster in der uebergebenen Funktion selbst
+            03_residual_pointclouds.ipynb) -- window_size_days entspricht dann
+            dem topologischen Lookback, während das (längere, feste)
+            Regressionsfenster in der übergebenen Funktion selbst
             eingeschlossen ist.
 
     Returns:
-        Das aeussere widgets.Tab-Objekt (bereits via display() angezeigt).
+        Das äussere widgets.Tab-Objekt (bereits via display() angezeigt).
     """
     if default_epsilon_cap is None:
         default_epsilon_cap = 1.0
@@ -841,14 +551,14 @@ def build_persistent_cluster_widget(
 
     all_asset_ids = set(universe_df[id_column].unique())
 
-    # Datum wird EINMAL erstellt und ueber alle Basket-Tabs hinweg geteilt (statt
-    # pro Tab neu), damit eine Aenderung in einem Tab automatisch in allen
-    # anderen uebernommen wird. ipywidgets erlaubt, dieselbe Widget-Instanz an
-    # mehreren Stellen im Widget-Baum einzuhaengen -- jede Stelle ist eine eigene
+    # Datum wird EINMAL erstellt und über alle Basket-Tabs hinweg geteilt (statt
+    # pro Tab neu), damit eine Änderung in einem Tab automatisch in allen
+    # anderen übernommen wird. ipywidgets erlaubt, dieselbe Widget-Instanz an
+    # mehreren Stellen im Widget-Baum einzuhängen -- jede Stelle ist eine eigene
     # Ansicht auf denselben Zustand und bleibt automatisch synchron; jedes Tab
     # registriert unten trotzdem seinen EIGENEN render() als Observer, damit
-    # alle vier Baskets bei einer Datumsaenderung neu zeichnen. Lookback bleibt
-    # bewusst PRO Basket unabhaengig (nicht Teil dieses Wunsches).
+    # alle vier Baskets bei einer Datumsänderung neu zeichnen. Lookback bleibt
+    # bewusst PRO Basket unabhängig (nicht Teil dieses Wunsches).
     date_picker = widgets.DatePicker(
         description="Datum:", value=(default_date or data_max), min=data_min, max=data_max,
     )
@@ -907,15 +617,15 @@ def build_persistent_cluster_widget(
 
         # Schutz gegen mehrfaches, redundantes Rendern: manche Notebook-
         # Frontends (u.a. beobachtet in VS Code, insbesondere bei einem
-        # Widget wie date_picker, das gleichzeitig in mehreren Tabs eingehaengt
+        # Widget wie date_picker, das gleichzeitig in mehreren Tabs eingehängt
         # ist -- jeder Tab ist eine eigene Ansicht auf denselben Zustand) lösen
         # pro Nutzeraktion mehrere "value changed"-Events aus, statt nur eines.
-        # Ohne Schutz wuerde jedes dieser redundanten Events einen kompletten
-        # weiteren Render-Durchlauf ausloesen -> derselbe Plot erscheint
-        # mehrfach hintereinander. Da _last_render_key den zuletzt tatsaechlich
-        # gerenderten Zustand festhaelt, wird ein Durchlauf uebersprungen,
+        # Ohne Schutz würde jedes dieser redundanten Events einen kompletten
+        # weiteren Render-Durchlauf auslösen -> derselbe Plot erscheint
+        # mehrfach hintereinander. Da _last_render_key den zuletzt tatsächlich
+        # gerenderten Zustand festhält, wird ein Durchlauf übersprungen,
         # sobald sich seit dem letzten Render NICHTS an den relevanten Werten
-        # geaendert hat -- unabhaengig davon, wie oft render() aufgerufen wird.
+        # geändert hat -- unabhängig davon, wie oft render() aufgerufen wird.
         _last_render_key = [None]
 
         def render(*_change):
@@ -929,10 +639,10 @@ def build_persistent_cluster_widget(
                 return
             _last_render_key[0] = render_key
 
-            # Bereich IMMER leeren, auch bei einem fruehen return unten -- sonst
-            # bleibt das Dendrogramm vom letzten gueltigen Zustand sichtbar,
-            # waehrend "out" schon eine Fehlermeldung fuer den neuen
-            # (ungueltigen) Zustand zeigt.
+            # Bereich IMMER leeren, auch bei einem frühen return unten -- sonst
+            # bleibt das Dendrogramm vom letzten gültigen Zustand sichtbar,
+            # während "out" schon eine Fehlermeldung für den neuen
+            # (ungültigen) Zustand zeigt.
             with dendro_out:
                 clear_output(wait=True)
 
@@ -940,18 +650,18 @@ def build_persistent_cluster_widget(
                 clear_output(wait=True)
 
                 if date is None:
-                    print("Bitte ein Datum waehlen.")
+                    print("Bitte ein Datum wählen.")
                     return
                 if date < data_min or date > data_max:
-                    print(f"Bitte ein Datum zwischen {data_min} und {data_max} waehlen.")
+                    print(f"Bitte ein Datum zwischen {data_min} und {data_max} wählen.")
                     return
 
                 date_ts = pd.Timestamp(date, tz="UTC")
                 start_date = date - datetime.timedelta(days=lookback_days - 1)
                 if start_date < data_min:
                     print(
-                        f"Lookback von {lookback_days} Tagen reicht vor {data_min} zurueck "
-                        "— kuerzeren Lookback oder spaeteres Datum waehlen."
+                        f"Lookback von {lookback_days} Tagen reicht vor {data_min} zurück "
+                        "— kürzeren Lookback oder späteres Datum wählen."
                     )
                     return
 
@@ -964,7 +674,7 @@ def build_persistent_cluster_widget(
                     basket_df_at_date.loc[basket_df_at_date["basket"] == label, id_column]
                 )
                 if len(basket_asset_ids) < 2:
-                    print(f"{label}: weniger als 2 Assets an diesem Datum — keine Cluster-Analyse moeglich.")
+                    print(f"{label}: weniger als 2 Assets an diesem Datum — keine Cluster-Analyse möglich.")
                     return
 
                 basket_exclude_ids = excluded_ids | (all_asset_ids - basket_asset_ids)
@@ -973,7 +683,7 @@ def build_persistent_cluster_widget(
                     window_size_days=lookback_days, exclude_asset_ids=basket_exclude_ids,
                 )
                 if result is None:
-                    print(f"{label}: zu wenig gemeinsame Preis-Historie fuer dieses Fenster.")
+                    print(f"{label}: zu wenig gemeinsame Preis-Historie für dieses Fenster.")
                     return
 
                 aids = result["asset_ids"]
@@ -992,14 +702,12 @@ def build_persistent_cluster_widget(
                 # plt.show()/plt.close()) statt zwei getrennter Figuren:
                 # oben Dendrogramm + Barcode, darunter Korrelations- und
                 # Distanz-Heatmap. Ein gemeinsames plt.show() garantiert
-                # identisches, bereits bewaehrtes Resize-Verhalten (horizontal
-                # UND vertikal) fuer alle vier Panels gleichzeitig -- eine
-                # separate Plotly-Figur (fruehere Barcode-Version) reagierte in
-                # manchen Notebook-Frontends nicht zuverlaessig auf
-                # Groessenaenderungen des Containers. Preis: der Barcode
-                # verliert seine interaktiven Hover-Tooltips (die Plotly-
-                # Version bleibt fuer eigenstaendige Nutzung via
-                # plot_h0_persistence_barcode() erhalten). Distanz-Skala fix
+                # identisches, bereits bewährtes Resize-Verhalten (horizontal
+                # UND vertikal) für alle vier Panels gleichzeitig -- eine
+                # separate Plotly-Figur reagierte in manchen Notebook-
+                # Frontends nicht zuverlässig auf Grössenänderungen des
+                # Containers, daher Matplotlib für den Barcode (Preis: keine
+                # interaktiven Hover-Tooltips mehr). Distanz-Skala fix
                 # auf [0, 2] (theoretisches Maximum, siehe correlation_distance:
                 # d=sqrt(2*(1-rho)), rho in [-1,1] -> d in [0,2]) statt sqrt(2)
                 # ("keine Korrelation") -- sonst werden alle (leicht) anti-
