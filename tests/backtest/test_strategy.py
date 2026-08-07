@@ -1,0 +1,204 @@
+import numpy as np
+import pandas as pd
+import pytest
+
+from src.backtest.config import BasketParams
+from src.backtest.strategy import (
+    ClusterSpreadStrategy,
+    PairwiseZScoreStrategy,
+    StrategyState,
+    build_strategy,
+)
+
+
+def _state(definitions):
+    return StrategyState(membership_key="mk", fitted_at=pd.Timestamp("2025-01-01", tz="UTC"), definitions=definitions)
+
+
+class TestGenerateEntries:
+    def test_no_signal_below_entry_threshold(self, make_spread_definition, make_bar_context, make_price_window):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(entry_z=2.0, stop_z=4.0)
+        definition = make_spread_definition(mu=0.0, sigma=1.0)
+        prices = make_price_window({"AAAUSDT": np.exp(1.0), "BBBUSDT": 1.0})  # z=1.0 < entry_z
+        ctx = make_bar_context(params=params, prices=prices)
+        signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
+        assert signals == []
+
+    def test_signal_between_entry_and_stop(self, make_spread_definition, make_bar_context, make_price_window):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(entry_z=2.0, stop_z=4.0)
+        definition = make_spread_definition(mu=0.0, sigma=1.0)
+        prices = make_price_window({"AAAUSDT": np.exp(3.0), "BBBUSDT": 1.0})  # z=3.0
+        ctx = make_bar_context(params=params, prices=prices)
+        signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
+        assert len(signals) == 1
+        assert signals[0].direction == -1  # z>0 -> Spread SHORT
+        assert signals[0].signal_value == pytest.approx(3.0)
+
+    def test_no_signal_when_already_beyond_stop_threshold(self, make_spread_definition, make_bar_context, make_price_window):
+        """Regressionstest fuer einen echten Bug: ein Signal, dessen Z-Score
+        schon jenseits von stop_z liegt, ist per Definition ungueltig (stop_z
+        ist die Invalidierungsschwelle) -- ein Entry HIER wuerde im
+        naechsten Bar sofort wieder auf den Stop laufen. generate_entries
+        MUSS solche Kandidaten verwerfen."""
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(entry_z=2.0, stop_z=4.0)
+        definition = make_spread_definition(mu=0.0, sigma=1.0)
+        prices = make_price_window({"AAAUSDT": np.exp(4.8), "BBBUSDT": 1.0})  # z=4.8 > stop_z
+        ctx = make_bar_context(params=params, prices=prices)
+        signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
+        assert signals == []
+
+    def test_extreme_zscore_allowed_when_stop_z_is_none(self, make_spread_definition, make_bar_context, make_price_window):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(entry_z=2.0, stop_z=None)
+        definition = make_spread_definition(mu=0.0, sigma=1.0)
+        prices = make_price_window({"AAAUSDT": np.exp(4.8), "BBBUSDT": 1.0})
+        ctx = make_bar_context(params=params, prices=prices)
+        signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
+        assert len(signals) == 1
+
+    def test_skips_definition_when_asset_at_position_limit(
+        self, make_spread_definition, make_bar_context, make_price_window, make_position,
+    ):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(entry_z=2.0, stop_z=4.0, max_positions_per_asset=1)
+        definition = make_spread_definition(mu=0.0, sigma=1.0, asset_ids=(1, 2))
+        existing = make_position(
+            params=params,
+            spread=make_spread_definition(asset_ids=(1, 99), symbols=("AAAUSDT", "ZZZUSDT")),
+        )
+        prices = make_price_window({"AAAUSDT": np.exp(3.0), "BBBUSDT": 1.0})
+        ctx = make_bar_context(params=params, prices=prices, open_positions=[existing])
+        signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
+        assert signals == []
+
+    def test_direction_sign_convention_for_negative_zscore(self, make_spread_definition, make_bar_context, make_price_window):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(entry_z=2.0, stop_z=4.0)
+        definition = make_spread_definition(mu=0.0, sigma=1.0)
+        prices = make_price_window({"AAAUSDT": np.exp(-3.0), "BBBUSDT": 1.0})  # z<0 -> LONG
+        ctx = make_bar_context(params=params, prices=prices)
+        signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
+        assert signals[0].direction == 1
+
+    def test_skips_definition_with_missing_price(self, make_spread_definition, make_bar_context, make_price_window):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(entry_z=2.0, stop_z=4.0)
+        definition = make_spread_definition(mu=0.0, sigma=1.0)
+        prices = make_price_window({"AAAUSDT": np.nan, "BBBUSDT": 1.0})
+        ctx = make_bar_context(params=params, prices=prices)
+        signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
+        assert signals == []
+
+
+class TestCheckExit:
+    def test_no_exit_before_min_holding(self, make_bar_context, make_price_window, make_position):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(exit_z=0.5, min_holding_candles=5)
+        position = make_position(params=params, bars_held=2)
+        prices = make_price_window({"AAAUSDT": np.exp(0.1), "BBBUSDT": 1.0})  # waere ein Target-Exit
+        ctx = make_bar_context(params=params, prices=prices)
+        assert not strategy.check_exit(position=position, ctx=ctx, params=params).should_exit
+
+    def test_target_exit_after_min_holding(self, make_bar_context, make_price_window, make_position):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(exit_z=0.5, min_holding_candles=1)
+        position = make_position(params=params, bars_held=1)
+        prices = make_price_window({"AAAUSDT": np.exp(0.1), "BBBUSDT": 1.0})
+        ctx = make_bar_context(params=params, prices=prices)
+        decision = strategy.check_exit(position=position, ctx=ctx, params=params)
+        assert decision.should_exit
+        assert decision.reason == "target"
+
+    def test_no_exit_when_still_far_from_mean(self, make_bar_context, make_price_window, make_position):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(exit_z=0.5, min_holding_candles=1)
+        position = make_position(params=params, bars_held=5)
+        prices = make_price_window({"AAAUSDT": np.exp(2.0), "BBBUSDT": 1.0})
+        ctx = make_bar_context(params=params, prices=prices)
+        assert not strategy.check_exit(position=position, ctx=ctx, params=params).should_exit
+
+
+class TestStrategyRegistry:
+    def test_build_strategy_pairwise(self):
+        assert isinstance(build_strategy("pairwise_zscore"), PairwiseZScoreStrategy)
+
+    def test_build_strategy_cluster(self):
+        assert isinstance(build_strategy("cluster_johansen"), ClusterSpreadStrategy)
+
+    def test_unknown_strategy_raises(self):
+        with pytest.raises(ValueError):
+            build_strategy("does_not_exist")
+
+
+class _FakeSnapshot:
+    def __init__(self, symbols, asset_ids):
+        self.symbols = tuple(symbols)
+        self.asset_ids = tuple(asset_ids)
+
+
+class TestPairwiseBuildDefinitions:
+    def test_finds_the_cointegrated_pair(self, synthetic_panel):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(
+            pair_prefilter_top_n=6, max_candidate_pairs=2,
+            # sehr niedrig, da das synthetische AAA/BBB-Paar wegen des dominanten
+            # gemeinsamen Faktors extrem schnell mean-revertiert (< 1 Kerze)
+            min_half_life_candles=0.1, max_half_life_candles=10_000,
+            require_adf=True, adf_alpha=0.1,
+        )
+        window = synthetic_panel["close"].iloc[:800]
+        snapshot = _FakeSnapshot(window.columns, [1, 2, 3, 4])
+
+        definitions, rejected = strategy.build_definitions(snapshot=snapshot, window=window, params=params)
+
+        assert definitions, f"keine Definitionen gefunden, rejected={rejected}"
+        found = {frozenset(d.symbols) for d in definitions}
+        assert frozenset({"AAAUSDT", "BBBUSDT"}) in found
+
+    def test_definition_carries_clique_diagnostics_after_on_snapshot(self, synthetic_panel, make_bar_context, make_price_window):
+        strategy = PairwiseZScoreStrategy()
+        params = BasketParams(
+            formation_window_candles=800, pair_prefilter_top_n=6, max_candidate_pairs=2,
+            min_half_life_candles=0.1, max_half_life_candles=10_000, require_adf=True, adf_alpha=0.1,
+        )
+        window = synthetic_panel["close"].iloc[:800]
+        snapshot = _FakeSnapshot(window.columns, [1, 2, 3, 4])
+        snapshot.membership_key = "mk"
+        snapshot.persistence = 0.77
+        snapshot.size = 4
+        snapshot.lookback_days = 7
+
+        from src.backtest.types import PriceWindow
+        arrays = {"close": window.to_numpy()}
+        symbol_to_col = {s: i for i, s in enumerate(window.columns)}
+        prices = PriceWindow(arrays, symbol_to_col, window.index, len(window) - 1)
+        ctx = make_bar_context(params=params, prices=prices, timestamp=window.index[-1])
+
+        state = strategy.on_snapshot(snapshot=snapshot, ctx=ctx, params=params)
+        assert state.definitions, "Formation sollte mindestens eine Definition liefern"
+        assert state.definitions[0].diagnostics["clique_persistence"] == 0.77
+        assert state.definitions[0].diagnostics["clique_size"] == 4
+
+
+class TestClusterBuildDefinitions:
+    def test_runs_without_crashing(self, synthetic_panel):
+        strategy = ClusterSpreadStrategy()
+        params = BasketParams(
+            min_johansen_relations=1, min_half_life_candles=1, max_half_life_candles=10_000,
+            require_adf=True, adf_alpha=0.1,
+        )
+        window = synthetic_panel["close"].iloc[:800]
+        snapshot = _FakeSnapshot(window.columns, [1, 2, 3, 4])
+
+        definitions, rejected = strategy.build_definitions(snapshot=snapshot, window=window, params=params)
+
+        if definitions:
+            d = definitions[0]
+            assert d.kind == "cluster"
+            assert len(d.weights) == len(d.symbols) == len(d.asset_ids)
+            assert sum(abs(w) for w in d.weights) == pytest.approx(1.0)
+        else:
+            assert rejected  # muss einen Ablehnungsgrund dokumentieren, nicht stillschweigend leer sein
