@@ -48,5 +48,9 @@ pyarrow
 # ── Hilfspakete ──
 tqdm
 
+# ── Hyperparameter-Tuning ──
+optuna
+optuna-dashboard
+
 # ── Dashboard ──
 customtkinter
