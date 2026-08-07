@@ -1,6 +1,6 @@
 from pathlib import Path
 
-# Project root — one level above notebooks/
+# Project root — one level above src/
 PROJECT_ROOT = Path(__file__).parent.parent
 
 # Root paths — works from any notebook two levels deep (notebooks/*/)
@@ -8,8 +8,6 @@ DATA_DIR         = PROJECT_ROOT / "data"
 RAW_DIR          = DATA_DIR / "raw"
 FETCHED_DIR      = RAW_DIR / "fetched"
 PROCESSED_DIR    = DATA_DIR / "processed"
-SRC_PATH         = PROJECT_ROOT / "Src"
-SECRET_PATH      = SRC_PATH / "secret.cfg"
 ASSETS_PATH      = FETCHED_DIR / "assets.parquet"
 ASSET_DAILY_DIR  = FETCHED_DIR / "asset_daily"
 ASSET_DAILY_PATH = ASSET_DAILY_DIR / "asset_daily.parquet"
@@ -26,5 +24,5 @@ VOLUME_COL        = "global_volume_24h_usd"
 
 # Shared universe thresholds
 MIN_VOLUME_24H_USD = 50_000_000
-TOP_N              = 100
-VS_CURRENCY        = "usd"
+TOP_N               = 100
+VS_CURRENCY         = "usd"

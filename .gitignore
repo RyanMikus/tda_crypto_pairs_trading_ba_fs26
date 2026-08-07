@@ -26,3 +26,7 @@ secret.cfg
 
 # Raw API response cache (dev-time, resumable fetch checkpoints)
 data/raw/cache/
+
+# Regenerable notebook outputs (rerun the notebooks to recreate)
+data/processed/plots/
+data/processed/features/
