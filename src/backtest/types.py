@@ -26,14 +26,14 @@ EXIT_REASONS = (
     "stop",
     "timeout",
     "clique_break",
+    "topological_break",
     "data_gap",
     "delisted",
     "risk_limit",
     "end_of_backtest",
 )
 """Bekannte Exit-Gründe, rein dokumentarisch -- exit_reason bleibt ein offener
-str, damit spätere eigene ExitRules (z.B. "topological_break") kein Schema-
-Update brauchen (siehe Plan, Abschnitt "Topologischer Struktur-Break")."""
+str, damit neue ExitRules kein Schema-Update brauchen."""
 
 
 @dataclass(frozen=True)
@@ -49,8 +49,8 @@ class SpreadDefinition:
     asset_ids: tuple[int, ...]
     symbols: tuple[str, ...]
     weights: tuple[float, ...]
-    mu: float
-    sigma: float
+    mu: float  # Formations-Referenzwert für Diagnostik -- NICHT mehr für den Live-Z-Score verwendet, siehe rolling_zscore()
+    sigma: float  # dito
     fitted_at: pd.Timestamp
     formation_start: pd.Timestamp
     diagnostics: dict = field(default_factory=dict)
@@ -62,6 +62,31 @@ class SpreadDefinition:
         if self.sigma == 0 or not np.isfinite(self.sigma):
             return 0.0
         return (self.spread_value(log_prices) - self.mu) / self.sigma
+
+    def rolling_zscore(self, price_window: pd.DataFrame) -> float | None:
+        """Rollierender Z-Score (klassisches Bollinger-Band-Prinzip): Mittelwert/
+        Std werden NEU aus price_window berechnet (die letzten N Kerzen bis
+        einschliesslich jetzt, kausal via PriceWindow.history -- Guard G2
+        verhindert strukturell jeden Blick über die aktuelle Bar hinaus),
+        statt aus dem bei Formation eingefrorenen mu/sigma. Nur die Hedge-
+        Ratio (self.weights) bleibt fix -- das ist die Kointegrationsbeziehung
+        aus OLS/Johansen, ein anderes Konzept als das Band selbst.
+
+        Args:
+            price_window: (n_candles, n_symbols)-DataFrame, Spalten in
+                DERSELBEN Reihenfolge wie self.symbols (siehe
+                PriceWindow.history(self.symbols, ...)).
+
+        Returns:
+            Aktueller Z-Score, oder None falls die Fenster-Std 0/nicht endlich
+            ist (kein sinnvolles Signal möglich -- z.B. konstante Preise).
+        """
+        log_prices = np.log(price_window[list(self.symbols)].to_numpy())
+        spread_series = log_prices @ np.asarray(self.weights)
+        sigma = float(spread_series.std(ddof=0))
+        if not np.isfinite(sigma) or sigma == 0:
+            return None
+        return float((spread_series[-1] - spread_series.mean()) / sigma)
 
 
 @dataclass(frozen=True)
@@ -105,6 +130,8 @@ class Position:
     params: "BasketParams"  # eingefroren bei Entry -- Kosten/Limits am Exit bleiben konsistent
     membership_key: str
     discovery_timestamp: pd.Timestamp
+    entry_death: float  # = epsilon* der Clique bei Entry, eingefroren (siehe CliqueSnapshot.death)
+    entry_lookback_days: int  # = CliqueSnapshot.lookback_days bei Entry, Default-Fenster für TopologicalBreakRule
     direction: int
     legs: list[Leg]
     entry_timestamp: pd.Timestamp

@@ -1,11 +1,7 @@
 """Engine-weite Break-/Exit-Bedingungen, unabhängig von der Strategie.
 
 Geordnete Liste (`ExitRule`-Objekte) statt einzelner Booleans, damit neue
-Break-Conditions ohne Änderungen an engine.py ergänzt werden können -- allen
-voran der vom Nutzer später selbst gebaute topologische Struktur-Break-
-Detektor (docs/project/BA_aufgabenstellung_zusatz.pdf, Single-Linkage +
-fcluster bei epsilon* - delta): er reiht sich als weiteres ExitRule-Objekt in
-DEFAULT_EXIT_CHAIN ein.
+Break-Conditions ohne Änderungen an engine.py ergänzt werden können.
 
 Die strategie-spezifische "target"-Exit-Bedingung (Z-Score kehrt in den
 exit_z-Korridor zurück) läuft NICHT hier, sondern in
@@ -18,9 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-import numpy as np
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import squareform
 
 from src.backtest.types import BarContext, ExitDecision, NO_EXIT, Position
+from src.clustering.helpers import HelperFunctions
+from src.config import CANDLES_PER_DAY
 
 
 class ExitRule(Protocol):
@@ -50,18 +49,23 @@ class DataGapRule:
 @dataclass
 class StopLossRule:
     """|Z-Score| >= stop_z -> sofortiger Exit. Generisch für jede Strategie,
-    da SpreadDefinition.zscore() unabhängig davon funktioniert, ob der Spread
-    aus 2 (Pairwise) oder N (Cluster) Assets besteht."""
+    da SpreadDefinition.rolling_zscore() unabhängig davon funktioniert, ob
+    der Spread aus 2 (Pairwise) oder N (Cluster) Assets besteht. Nutzt
+    denselben rollierenden (Bollinger-)Z-Score wie Entry/Target-Exit
+    (BaseSpreadZScoreStrategy) -- "N Sigma" bedeutet damit für alle drei
+    Regeln konsistent dasselbe, aktuelle Band."""
 
     reason: str = "stop"
 
     def check(self, position: Position, ctx: BarContext) -> ExitDecision:
         if ctx.params.stop_z is None:
             return NO_EXIT
-        log_prices = ctx.prices.log_last(position.spread.symbols)
-        if np.isnan(log_prices).any():
+        price_window = ctx.prices.history(position.spread.symbols, ctx.params.bollinger_window_candles, field="close")
+        if price_window.isna().any().any():
             return NO_EXIT  # DataGapRule kümmert sich um fehlende Preise
-        z = position.spread.zscore(log_prices)
+        z = position.spread.rolling_zscore(price_window)
+        if z is None:
+            return NO_EXIT
         if abs(z) >= ctx.params.stop_z:
             return ExitDecision(True, self.reason, signal_value=z)
         return NO_EXIT
@@ -93,16 +97,77 @@ class CliqueBreakRule:
         return NO_EXIT
 
 
+@dataclass
+class TopologicalBreakRule:
+    """Topologischer Struktur-Break-Detektor (docs/project/BA_aufgabenstellung_zusatz.pdf,
+    Abschnitt 2): Single-Linkage + fcluster bei epsilon* - delta, NUR auf den
+    Assets der offenen Clique (kein Basket-weiter Re-Discovery-Schritt --
+    genau das macht das Verfahren günstig, siehe PDF und Prototyp in
+    notebooks/02_tda_clustering/05_topological_break.ipynb).
+
+    epsilon* = position.entry_death (bei Entry aus CliqueSnapshot.death
+    eingefroren -- NICHT persistence, siehe cliques.CliqueSnapshot.persistence-
+    Kommentar). Rolling-Window per Default = position.entry_lookback_days in
+    Kerzen (überschreibbar via topo_break_window_candles).
+
+    Zensierter Fall (entry_death == epsilon_cap der Discovery, siehe
+    05_topological_break.ipynb Abschnitt 4/7): bewusst KEINE Sonderbehandlung
+    -- eine Clique, die bei der Discovery nie extern verschmolzen ist, hat
+    schlicht keine beobachtete Aussengrenze; die Regel greift dort seltener,
+    das ist die korrekte Konsequenz, keine Notlösung. Für die Auswertung
+    trägt jede ausgelöste ExitDecision `signal_value=tau`, damit sich
+    zensierte Fälle (tau nahe/gleich epsilon_cap - delta) im Nachhinein aus
+    den Trades herausfiltern lassen.
+    """
+
+    reason: str = "topological_break"
+
+    def check(self, position: Position, ctx: BarContext) -> ExitDecision:
+        if not ctx.params.topo_break_enabled:
+            return NO_EXIT
+        window_candles = ctx.params.topo_break_window_candles or (
+            position.entry_lookback_days * CANDLES_PER_DAY
+        )
+        if ctx.bar_index < window_candles - 1:
+            return NO_EXIT  # zu wenig Historie -- kein Fehler, einfach (noch) nicht prüfbar
+        if len(position.symbols) < 2:
+            return NO_EXIT  # Single-Linkage braucht mindestens 2 Assets
+
+        prices = ctx.prices.history(position.symbols, window_candles, field="close")
+        returns = prices.pct_change().dropna(how="any")
+        if returns.shape[0] < 2:
+            return NO_EXIT
+
+        tau = position.entry_death - ctx.params.topo_break_delta
+        if tau <= 0:
+            # entry_death lag bereits bei/unter delta (degenerierte Clique,
+            # in der Praxis nicht beobachtet -- death-Werte liegen deutlich
+            # darueber). Kein sinnvoller Schnitt moeglich: fcluster mit
+            # t<=0 wuerde JEDEN Punkt zum Singleton machen (alle Merge-Hoehen
+            # sind >= 0), also bei jedem Check sofort "gebrochen" melden,
+            # unabhaengig vom tatsaechlichen Zustand. Lieber gar nicht pruefen.
+            return NO_EXIT
+
+        dist = HelperFunctions.correlation_distance(returns)
+        z = linkage(squareform(dist, checks=False), method="single")
+        labels = fcluster(z, t=tau, criterion="distance")
+        if len(set(labels)) > 1:
+            return ExitDecision(True, self.reason, signal_value=tau)
+        return NO_EXIT
+
+
 DEFAULT_EXIT_CHAIN: list[ExitRule] = [
     DataGapRule(),
     StopLossRule(),
+    TopologicalBreakRule(),
     TimeoutRule(),
     CliqueBreakRule(),
 ]
-"""Reihenfolge ist bewusst: Risiko-/Datenqualitäts-Regeln zuerst. Ein
-künftiger TopologicalBreakRule reiht sich hier einfach ein (z.B. vor
-StopLossRule), ohne dass engine.py, BasketParams oder die bestehenden Regeln
-angefasst werden müssen."""
+"""Reihenfolge ist bewusst: Risiko-/Datenqualitäts-Regeln zuerst, dann die
+strukturelle Integritätsprüfung (topologisch, dann Mitgliedschaft), dann
+Zeit-Limits. TopologicalBreakRule ist per BasketParams.topo_break_enabled
+standardmässig AUS (siehe config.py) -- ohne Wirkung, bis ein Run das
+bewusst aktiviert."""
 
 
 def evaluate_exit_chain(

@@ -118,8 +118,18 @@ class HelperFunctions:
             ohlcv_df: OHLCV-DataFrame mit mindestens den Spalten DATE_COL,
                 TIMESTAMP_COL, ASSET_ID_COL und CLOSE_COL.
             universe_df: Universe-DataFrame mit DATE_COL und ASSET_ID_COL.
-            end_date: Enddatum des Fensters. Wird auf UTC-Mitternacht normiert.
-            window_size_days: Anzahl Kalendertage im Fenster (Standard: 30).
+            end_date: Cutoff-Zeitpunkt des Fensters, rechtsseitig geschlossen
+                (Kerzen mit TIMESTAMP_COL <= end_date werden einbezogen,
+                keine späteren). Volle Zeitstempel-Präzision -- WIRD NICHT
+                mehr auf Mitternacht normiert (siehe Look-Ahead-Hinweis unten).
+                Nur für die Universe-Zugehörigkeit (welche Assets überhaupt in
+                Frage kommen) wird intern auf den Kalendertag normiert, da
+                universe_df ohnehin nur Tagesgranularität hat.
+            window_size_days: Fensterlänge in Tagen (Standard: 30), als
+                Timedelta auf end_date angewendet -- keine Kalendertag-
+                Rundung, funktioniert daher auch für sub-tägige end_date-
+                Werte (z.B. alle 2h neu aufrufen für kürzere Discovery-
+                Intervalle).
             min_asset_coverage: Mindestanteil nicht-NaN Timestamps pro Asset
                 (Standard: 0.95 = 95 %).
 
@@ -133,21 +143,36 @@ class HelperFunctions:
                 - timestamps (Index): Zeitstempel der Punkte (Zeilenindex).
                 - n_points (int): Anzahl Punkte = Anzahl Zeitschritte.
                 - n_dimensions (int): Anzahl Dimensionen = Anzahl Assets.
-                - start_date (Timestamp): Startdatum des Fensters.
-                - end_date (Timestamp): Enddatum des Fensters.
-        """
-        end_date = pd.to_datetime(end_date, utc=True).normalize()
-        start_date = end_date - pd.Timedelta(days=window_size_days - 1)
+                - start_date (Timestamp): Startzeitpunkt des Fensters (exklusiv).
+                - end_date (Timestamp): Cutoff-Zeitpunkt des Fensters (inklusiv,
+                    wie übergeben, ohne Normierung).
 
-        eligible_asset_ids = HelperFunctions.get_universe_asset_ids_for_date(universe_df, end_date)
+        Look-Ahead-Hinweis (ehemals "Guard G1", siehe src/backtest/cliques.py):
+            Vorher wurde end_date auf Mitternacht normiert und auf DATE_COL
+            gefiltert -- eine für Tag D "gebaute" Punktwolke enthielt damit
+            ALLE 288 Kerzen von Tag D, auch die nach Mitternacht noch gar
+            nicht bekannten. Das war für tägliche Discovery durch einen
+            fixen 1-Tag availability_lag kompensierbar, verhindert aber JEDE
+            sub-tägige Discovery-Kadenz (2h/3h/.../12h): innerhalb desselben
+            Kalendertags hätte jeder Aufruf exakt dieselbe, volle Tages-
+            Punktwolke geliefert. Mit TIMESTAMP_COL <= end_date (statt
+            DATE_COL) gibt es dieses Problem nicht mehr -- Aufrufer, die die
+            alte "kompletter Tag D"-Semantik brauchen, übergeben end_date als
+            Mitternacht des FOLGETAGS (D+1 00:00 statt D 00:00).
+        """
+        end_date = pd.to_datetime(end_date, utc=True)
+        universe_date = end_date.normalize()
+        start_date = end_date - pd.Timedelta(days=window_size_days)
+
+        eligible_asset_ids = HelperFunctions.get_universe_asset_ids_for_date(universe_df, universe_date)
         if exclude_asset_ids:
             eligible_asset_ids = [i for i in eligible_asset_ids if i not in exclude_asset_ids]
         if len(eligible_asset_ids) < 2:
             return None
 
         window_data = ohlcv_df.loc[
-            (ohlcv_df[DATE_COL] >= start_date) &
-            (ohlcv_df[DATE_COL] <= end_date) &
+            (ohlcv_df[TIMESTAMP_COL] > start_date) &
+            (ohlcv_df[TIMESTAMP_COL] <= end_date) &
             (ohlcv_df[ASSET_ID_COL].isin(eligible_asset_ids)),
             [TIMESTAMP_COL, ASSET_ID_COL, CLOSE_COL]
         ].copy()
@@ -525,10 +550,9 @@ class HelperFunctions:
         wide_returns_df = pd.DataFrame(wide["point_cloud"], columns=wide_symbols, index=wide["timestamps"])
         residual_df = HelperFunctions.residualize_returns(wide_returns_df, factor_columns=factor_columns)
 
-        topo_start = pd.to_datetime(end_date, utc=True).normalize() - pd.Timedelta(
-            days=topological_lookback_days - 1
-        )
-        sliced = residual_df.loc[residual_df.index >= topo_start]
+        end_ts = pd.to_datetime(end_date, utc=True)
+        topo_start = end_ts - pd.Timedelta(days=topological_lookback_days)
+        sliced = residual_df.loc[residual_df.index > topo_start]
 
         if sliced.shape[0] < 2 or sliced.shape[1] < 2:
             return None
@@ -540,7 +564,7 @@ class HelperFunctions:
             "n_points": sliced.shape[0],
             "n_dimensions": sliced.shape[1],
             "start_date": topo_start,
-            "end_date": pd.to_datetime(end_date, utc=True).normalize(),
+            "end_date": end_ts,
         }
 
     @staticmethod
@@ -881,11 +905,27 @@ class HelperFunctions:
         (siehe 02_pointclouds.ipynb / 03_residual_pointclouds.ipynb).
 
         Returns:
-            DataFrame mit einer Zeile pro (Datum, Basket), an dem tatsächlich
-            eine Clique gefunden wurde (kein Eintrag für Tage ohne Cluster --
+            DataFrame mit einer Zeile pro (Zeitpunkt, Basket), an dem tatsächlich
+            eine Clique gefunden wurde (kein Eintrag für Zeitpunkte ohne Cluster --
             Abwesenheit in dieser Tabelle IST die Information). Spalten:
-            discovery_date, basket, asset_ids (list[int]), persistence, size,
-            lookback_days.
+            discovery_date, basket, asset_ids (list[int]), persistence, death,
+            size, lookback_days. death = epsilon*, die Distanz, bei der die
+            Clique als Gruppe zum ersten Mal mit einem Nicht-Mitglied
+            verschmelzen würde (gedeckelt bei epsilon_cap) -- das ist der
+            fürs Struktur-Break-Monitoring relevante Wert (siehe
+            src/backtest/exit_rules.TopologicalBreakRule), NICHT persistence
+            (= death - birth, birth ist bei den hier gefundenen Cliquen wegen
+            min_cluster_size>=2 fast nie 0).
+
+        Sub-tägige Discovery-Intervalle (dates mit z.B. freq="2h"/"4h"): die
+        Basket-/Volumen-Zugehörigkeit bleibt pro Kalendertag fix (rolling_volume_df
+        hat ohnehin nur Tagesgranularität -- jeder Aufruf innerhalb desselben
+        Tages nutzt also dieselbe Mitgliederliste), NUR das Clique-Fenster
+        (point_cloud_fn) läuft bis zum vollen Zeitstempel von t, nicht bis
+        Tagesende. discovery_date bleibt entsprechend ein voller Timestamp
+        (KEIN .normalize() -- siehe src/backtest/cliques.py, das genau diese
+        Zusicherung voraussetzt, um das Discovery-Intervall aus den Daten zu
+        inferieren statt es fest anzunehmen).
         """
         rows = []
         for label in basket_labels:
@@ -893,8 +933,9 @@ class HelperFunctions:
             threshold = best_threshold[label]
 
             for t in dates:
+                t = pd.Timestamp(t)
                 basket_df_at_t = HelperFunctions.build_volume_baskets(
-                    rolling_volume_df, t, id_column=id_column, date_column=date_column,
+                    rolling_volume_df, t.normalize(), id_column=id_column, date_column=date_column,
                     basket_upper_bounds=basket_upper_bounds,
                 )
                 basket_asset_ids = set(basket_df_at_t.loc[basket_df_at_t["basket"] == label, id_column])
@@ -917,10 +958,11 @@ class HelperFunctions:
                     continue
                 clique = clusters[0]
                 rows.append({
-                    "discovery_date": pd.Timestamp(t).normalize(),
+                    "discovery_date": t,
                     "basket": label,
                     "asset_ids": clique["asset_ids"],
                     "persistence": clique["persistence"],
+                    "death": clique["death"],
                     "size": clique["size"],
                     "lookback_days": lb,
                 })

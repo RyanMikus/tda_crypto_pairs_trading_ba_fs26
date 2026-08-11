@@ -180,9 +180,10 @@ class Portfolio:
             "params": params, "strategy_name": strategy_name, "fill_at_bar_index": fill_at_bar_index,
         })
 
-    def queue_close(self, *, position: Position, reason: str, fill_at_bar_index: int) -> None:
+    def queue_close(self, *, position: Position, reason: str, fill_at_bar_index: int, signal_value: float | None = None) -> None:
         self._pending_closes.append({
             "position_id": position.position_id, "reason": reason, "fill_at_bar_index": fill_at_bar_index,
+            "signal_value": signal_value,
         })
 
     def execute_pending(self, *, bar_index: int, timestamp: pd.Timestamp) -> None:
@@ -193,7 +194,7 @@ class Portfolio:
         ready_closes = [c for c in self._pending_closes if c["fill_at_bar_index"] <= bar_index]
         self._pending_closes = [c for c in self._pending_closes if c["fill_at_bar_index"] > bar_index]
         for item in ready_closes:
-            self._execute_close(item["position_id"], item["reason"], bar_index, timestamp)
+            self._execute_close(item["position_id"], item["reason"], bar_index, timestamp, item["signal_value"])
 
         ready_opens = [o for o in self._pending_opens if o["fill_at_bar_index"] <= bar_index]
         self._pending_opens = [o for o in self._pending_opens if o["fill_at_bar_index"] > bar_index]
@@ -238,6 +239,7 @@ class Portfolio:
         position = Position(
             position_id=position_id, strategy=strategy_name, basket=basket, spread=definition, params=params,
             membership_key=snapshot.membership_key, discovery_timestamp=snapshot.discovery_timestamp,
+            entry_death=snapshot.death, entry_lookback_days=snapshot.lookback_days,
             direction=signal.direction, legs=legs, entry_timestamp=ts,
             entry_signal_value=signal.signal_value, entry_spread_value=signal.spread_value,
             gross_notional=gross_notional, entry_equity=equity, entry_cost=entry_cost_total,
@@ -249,7 +251,18 @@ class Portfolio:
         self.open_positions[position_id] = position
         self.positions_by_basket.setdefault(basket, []).append(position_id)
 
-    def _execute_close(self, position_id: str, reason: str, bar_index: int, ts: pd.Timestamp) -> None:
+    def _price_window(self, symbols: tuple[str, ...], n_candles: int, bar_index: int, field: str = "close") -> pd.DataFrame:
+        """Wie types.PriceWindow.history(), aber auf Portfolio-Ebene -- nur
+        fürs Trade-Log bei Exit gebraucht (siehe _execute_close), wenn die
+        auslösende ExitRule keinen signal_value mitliefert (z.B. timeout/
+        data_gap/clique_break) und exit_z stattdessen frisch nachberechnet
+        werden muss. Kausal (nur Kerzen bis einschliesslich bar_index)."""
+        cols = [self._symbol_to_col[s] for s in symbols]
+        start = max(bar_index - n_candles + 1, 0)
+        arr = self._arrays[field][start:bar_index + 1][:, cols]
+        return pd.DataFrame(arr, columns=list(symbols))
+
+    def _execute_close(self, position_id: str, reason: str, bar_index: int, ts: pd.Timestamp, signal_value: float | None = None) -> None:
         position = self.open_positions.pop(position_id, None)
         if position is None:
             return
@@ -275,7 +288,20 @@ class Portfolio:
         self.realized_pnl_cum += net_pnl
 
         exit_spread_value = position.spread.spread_value(exit_log_prices)
-        exit_z = position.spread.zscore(exit_log_prices)
+        if signal_value is not None:
+            # Der tatsaechliche (rollierende) Z-Score, den die ausloesende
+            # ExitRule/Strategie beim Entscheid berechnet hat (siehe
+            # ExitDecision.signal_value) -- vermeidet eine abweichende
+            # Neuberechnung und ist die einzig korrekte Quelle fuer "welcher
+            # Z-Score hat den Exit ausgeloest".
+            exit_z = signal_value
+        else:
+            # Ausloeser ohne eigenen Z-Score (timeout/data_gap/clique_break) --
+            # informativer Nachtrag frisch aus dem rollierenden Band, NaN falls
+            # nicht berechenbar (z.B. Datenluecke im Fenster).
+            exit_price_window = self._price_window(position.spread.symbols, position.params.bollinger_window_candles, bar_index)
+            rolling_z = position.spread.rolling_zscore(exit_price_window) if not exit_price_window.isna().any().any() else None
+            exit_z = rolling_z if rolling_z is not None else float("nan")
         diag = position.spread.diagnostics
 
         self.trade_log.append({
@@ -318,6 +344,8 @@ class Portfolio:
             "n_coint_relations": diag.get("n_coint_relations", np.nan),
             "persistence": diag.get("clique_persistence", np.nan),
             "clique_size": diag.get("clique_size", np.nan),
+            "entry_death": position.entry_death,
+            "entry_lookback_days": position.entry_lookback_days,
         })
 
     def force_close_all(self, *, bar_index: int, ts: pd.Timestamp, reason: str = "end_of_backtest") -> None:

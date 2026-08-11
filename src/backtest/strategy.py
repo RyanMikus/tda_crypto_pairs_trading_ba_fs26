@@ -57,7 +57,7 @@ class BaseSpreadZScoreStrategy(ABC):
     name: str = "base_spread_zscore"
 
     def required_history_candles(self, params: BasketParams) -> int:
-        return params.formation_window_candles
+        return max(params.formation_window_candles, params.bollinger_window_candles)
 
     @abstractmethod
     def build_definitions(
@@ -105,7 +105,12 @@ class BaseSpreadZScoreStrategy(ABC):
             if np.isnan(log_prices).any():
                 continue
 
-            z = definition.zscore(log_prices)
+            price_window = ctx.prices.history(definition.symbols, params.bollinger_window_candles, field="close")
+            if price_window.isna().any().any():
+                continue
+            z = definition.rolling_zscore(price_window)
+            if z is None:
+                continue
             if abs(z) < params.entry_z:
                 continue
             if params.stop_z is not None and abs(z) >= params.stop_z:
@@ -131,10 +136,12 @@ class BaseSpreadZScoreStrategy(ABC):
     ) -> ExitDecision:
         if position.bars_held < params.min_holding_candles:
             return NO_EXIT
-        log_prices = ctx.prices.log_last(position.spread.symbols)
-        if np.isnan(log_prices).any():
+        price_window = ctx.prices.history(position.spread.symbols, params.bollinger_window_candles, field="close")
+        if price_window.isna().any().any():
             return NO_EXIT
-        z = position.spread.zscore(log_prices)
+        z = position.spread.rolling_zscore(price_window)
+        if z is None:
+            return NO_EXIT
         if abs(z) <= params.exit_z:
             return ExitDecision(True, "target", signal_value=z)
         return NO_EXIT

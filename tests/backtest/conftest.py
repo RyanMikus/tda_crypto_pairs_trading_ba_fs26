@@ -79,6 +79,7 @@ def write_clique_cache(tmp_path, *, price_index, symbol_to_id, symbols, basket="
             "basket": basket,
             "asset_ids": [symbol_to_id[s] for s in symbols],
             "persistence": 0.5,
+            "death": 1.0,
             "size": len(symbols),
             "lookback_days": lookback_days,
         })
@@ -120,7 +121,10 @@ def make_spread_definition():
 
 @pytest.fixture
 def make_position(make_spread_definition):
-    def _make(*, params=None, bars_held=0, missing_price_bars=0, membership_key="mk1", basket="Basket 1", spread=None, direction=1):
+    def _make(
+        *, params=None, bars_held=0, missing_price_bars=0, membership_key="mk1", basket="Basket 1", spread=None,
+        direction=1, entry_death=1.0, entry_lookback_days=1,
+    ):
         spread = spread or make_spread_definition()
         legs = [
             Leg(asset_id=a, symbol=s, weight=w)
@@ -130,6 +134,7 @@ def make_position(make_spread_definition):
             position_id="pos-1", strategy="pairwise_zscore", basket=basket, spread=spread,
             params=params or BasketParams(),
             membership_key=membership_key, discovery_timestamp=pd.Timestamp("2025-01-01", tz="UTC"),
+            entry_death=entry_death, entry_lookback_days=entry_lookback_days,
             direction=direction, legs=legs,
             entry_timestamp=pd.Timestamp("2025-01-01", tz="UTC"),
             entry_signal_value=2.0, entry_spread_value=0.0,
@@ -154,12 +159,26 @@ def make_price_window():
 
 @pytest.fixture
 def make_bar_context():
-    def _make(*, params=None, snapshot=None, prices=None, open_positions=(), equity=100_000.0, free_slots=1, basket="Basket 1", timestamp=None):
+    def _make(*, params=None, snapshot=None, prices=None, open_positions=(), equity=100_000.0, free_slots=1, basket="Basket 1", timestamp=None, bar_index=0):
         return BarContext(
-            timestamp=timestamp or pd.Timestamp("2025-01-02", tz="UTC"), bar_index=0, basket=basket,
+            timestamp=timestamp or pd.Timestamp("2025-01-02", tz="UTC"), bar_index=bar_index, basket=basket,
             params=params or BasketParams(), snapshot=snapshot, prices=prices,
             open_positions=tuple(open_positions), equity=equity, free_slots=free_slots,
         )
+    return _make
+
+
+@pytest.fixture
+def make_multi_bar_price_window():
+    """Baut ein PriceWindow mit MEHREREN Kerzen aus {symbol: [preis, preis, ...]}
+    -- fuer Regeln, die wie TopologicalBreakRule eine Preis-Historie
+    (.history()) statt nur der aktuellen Kerze (.last()) brauchen."""
+    def _make(prices: dict, bar_index=None):
+        symbols = list(prices.keys())
+        n_bars = len(next(iter(prices.values())))
+        arr = np.array([[prices[s][i] for s in symbols] for i in range(n_bars)], dtype=float)
+        idx = pd.date_range("2025-01-01", periods=n_bars, freq="5min", tz="UTC")
+        return PriceWindow({"close": arr}, {s: i for i, s in enumerate(symbols)}, idx, n_bars - 1 if bar_index is None else bar_index)
     return _make
 
 

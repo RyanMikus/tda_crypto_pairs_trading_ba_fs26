@@ -71,12 +71,21 @@ class BasketParams:
     exit_on_clique_break: bool = True  # Mitgliedschaftswechsel beim nächsten Snapshot
     max_data_gap_candles: int = 6
     # Topologischer Struktur-Break-Detektor (Single-Linkage/fcluster bei ε*-δ, siehe
-    # docs/project/BA_aufgabenstellung_zusatz.pdf) ist bewusst NICHT hier -- wird vom
-    # Nutzer später als eigenes ExitRule ergänzt, ohne dass sich BasketParams/Engine
-    # ändern müssen (siehe exit_rules.DEFAULT_EXIT_CHAIN).
+    # docs/project/BA_aufgabenstellung_zusatz.pdf und exit_rules.TopologicalBreakRule).
+    # epsilon* = position.entry_death (eingefroren bei Entry aus CliqueSnapshot.death,
+    # NICHT persistence). topo_break_window_candles=None -> Default ist
+    # position.entry_lookback_days in Kerzen umgerechnet (CANDLES_PER_DAY).
+    topo_break_enabled: bool = False
+    topo_break_delta: float = 0.001
+    topo_break_window_candles: int | None = None
 
     # --- Formation / Qualitätsfilter ---
     formation_window_candles: int = 288 * 7
+    # Rollierendes Bollinger-Fenster für Entry/Exit/Stop-Z-Score (siehe
+    # SpreadDefinition.rolling_zscore), bewusst deutlich kürzer als
+    # formation_window_candles (das bleibt für Hedge-Ratio/ADF/Half-Life),
+    # damit das Band tatsächlich zeitnah auf Volatilitätsänderungen reagiert.
+    bollinger_window_candles: int = 288
     max_candidate_pairs: int = 5
     pair_prefilter_top_n: int = 15
     require_adf: bool = True
@@ -122,7 +131,7 @@ class BacktestConfig:
     calibration_range: DateRange | None = None
     backtest_range: DateRange | None = None
     baskets: tuple[str, ...] = ("Basket 1", "Basket 2", "Basket 3", "Basket 4")
-    clique_variant: Literal["raw", "residual"] = "raw"
+    clique_variant: str = "raw_24h"  # z.B. "raw_6h"/"raw_12h"/"raw_24h"/"residual_6h"/"residual_12h"/"residual_24h"
 
     strategy_name: str = "pairwise_zscore"
     strategy_kwargs: dict = field(default_factory=dict)
@@ -213,7 +222,7 @@ class BacktestConfig:
             calibration_range=_range(d.get("calibration_range")),
             backtest_range=_range(d.get("backtest_range")),
             baskets=tuple(d.get("baskets", ("Basket 1", "Basket 2", "Basket 3", "Basket 4"))),
-            clique_variant=d.get("clique_variant", "raw"),
+            clique_variant=d.get("clique_variant", "raw_24h"),
             strategy_name=d.get("strategy_name", "pairwise_zscore"),
             strategy_kwargs=d.get("strategy_kwargs", {}),
             default_params=BasketParams(**d.get("default_params", {})),

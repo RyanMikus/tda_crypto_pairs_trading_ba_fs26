@@ -57,6 +57,8 @@ def _spread_def(weights=(1.0, -0.5)):
 class _FakeSnapshot:
     membership_key = "mk"
     discovery_timestamp = pd.Timestamp("2025-01-01", tz="UTC")
+    death = 1.0
+    lookback_days = 1
 
 
 def _make_portfolio(prices_by_bar, *, fill_price_field="open"):

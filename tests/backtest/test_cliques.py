@@ -75,7 +75,7 @@ class TestTimelineCursor:
             rows.append({
                 "discovery_date": d, "basket": "Basket 1",
                 "asset_ids": [symbol_to_id[s] for s in members],
-                "persistence": 0.5, "size": len(members), "lookback_days": 1,
+                "persistence": 0.5, "death": 1.0, "size": len(members), "lookback_days": 1,
             })
         df = pd.DataFrame(rows)
         cliques_dir = tmp_path / "cliques"

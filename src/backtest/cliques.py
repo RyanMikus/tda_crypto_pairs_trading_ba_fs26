@@ -1,17 +1,21 @@
 """Liest den Clique-Cache (data/processed/cliques/) ein und macht ihn für die
-Engine nutzbar -- bewusst AGNOSTISCH gegenüber dem Discovery-Intervall: der
-Cache ist aktuell täglich (siehe HelperFunctions.discover_cliques_over_dates),
-soll aber später auch mit kürzeren Intervallen (2h/3h/4h/6h/12h) erzeugt
-werden können, ohne dass dieses Modul angefasst werden muss. Deshalb:
+Engine nutzbar -- bewusst AGNOSTISCH gegenüber dem Discovery-Intervall: es
+gibt sechs Cache-Varianten (roh/residualisiert x 6h/12h/24h, siehe
+04_clique_cache.ipynb), dieses Modul nimmt kein festes Intervall an. Deshalb:
 `discovery_timestamp` bleibt immer ein voller Timestamp, nie `.normalize()`
-oder `.date()` -- und das Intervall wird aus den Daten selbst inferiert.
+oder `.date()` -- und das Intervall wird aus den Daten selbst inferiert
+(siehe `_infer_interval_from_series`/`infer_interval`).
 
 Look-Ahead-Guard G1: HelperFunctions.build_point_cloud (src/clustering/
-helpers.py:139-153) normiert end_date auf Mitternacht UTC und filtert
-DATE_COL <= end_date -- eine für Tag D discoverte Clique kennt damit ALLE
-288 Kerzen von Tag D. `availability_lag="auto"` kompensiert das, indem eine
-Clique erst 1 Discovery-Intervall nach ihrem discovery_timestamp handelbar
-wird.
+helpers.py) filtert seit der Kadenz-Umstellung nach `TIMESTAMP_COL <=
+end_date` (kein `.normalize()` auf Mitternacht mehr, siehe dortiger
+"Look-Ahead-Hinweis") -- eine bei `end_date`=t discoverte Clique kennt damit
+nur Kerzen bis einschliesslich t, nicht mehr wie früher den ganzen Kalendertag
+voraus. `availability_lag="auto"` (= das inferierte Discovery-Intervall,
+gedeckelt bei 1 Tag) bleibt trotzdem bestehen: sie kompensiert, dass die
+Clique-Zugehörigkeit selbst erst NACH dem Discovery-Zeitpunkt bekannt ist
+(Publikationsverzug der Discovery-Pipeline), nicht mehr eine Mitternacht-
+Normierung.
 """
 
 from __future__ import annotations
@@ -57,7 +61,10 @@ class CliqueSnapshot:
     asset_ids: tuple[int, ...]  # NUR aufgelöste Assets, 1:1 parallel zu symbols
     symbols: tuple[str, ...]  # 1:1 parallel zu asset_ids (asset_ids[i] <-> symbols[i])
     dropped_asset_ids: tuple[int, ...]  # nicht auflösbare Assets, informativ, NICHT in asset_ids
-    persistence: float  # = epsilon_death der TDA-Discovery (H0: birth immer 0)
+    persistence: float  # = death - birth, NICHT epsilon* (siehe death unten)
+    death: float  # = epsilon* -- Distanz, bei der die Clique-Gruppe zum ersten Mal mit einem
+    # Nicht-Mitglied verschmelzen würde (gedeckelt bei epsilon_cap). Für
+    # TopologicalBreakRule (src/backtest/exit_rules.py) relevant, NICHT persistence.
     size: int  # Grösse der ORIGINAL discoverten Clique (kann > len(asset_ids) sein, falls Assets dropped wurden)
     lookback_days: int
     membership_key: str  # sha1 über sorted(asset_ids), 12 Zeichen -- NACH dem Dropping berechnet
@@ -78,7 +85,7 @@ class CliqueTimeline:
     def from_cache(
         cls,
         *,
-        variant: Literal["raw", "residual"],
+        variant: str,
         id_to_symbol: dict[int, str],
         availability_lag: pd.Timedelta | Literal["auto"] = "auto",
         max_snapshot_age: pd.Timedelta | Literal["auto"] = "auto",
@@ -157,6 +164,7 @@ class CliqueTimeline:
                     symbols=tuple(symbols),
                     dropped_asset_ids=tuple(dropped),
                     persistence=float(row.persistence),
+                    death=float(row.death),
                     size=int(row.size),
                     lookback_days=int(row.lookback_days),
                     membership_key=_membership_key(resolved_ids),

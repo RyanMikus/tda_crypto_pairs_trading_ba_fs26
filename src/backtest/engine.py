@@ -180,7 +180,10 @@ class BacktestEngine:
                 if not decision.should_exit:
                     decision = self.strategy.check_exit(position=position, ctx=ctx, params=params)
                 if decision.should_exit:
-                    self.portfolio.queue_close(position=position, reason=decision.reason, fill_at_bar_index=fill_at)
+                    self.portfolio.queue_close(
+                        position=position, reason=decision.reason, fill_at_bar_index=fill_at,
+                        signal_value=decision.signal_value,
+                    )
 
             # 5) Entries
             for basket in self.config.baskets:

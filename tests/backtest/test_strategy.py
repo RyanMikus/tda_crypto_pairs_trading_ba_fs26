@@ -15,108 +15,132 @@ def _state(definitions):
     return StrategyState(membership_key="mk", fitted_at=pd.Timestamp("2025-01-01", tz="UTC"), definitions=definitions)
 
 
+def _zeros_and_spike_window(make_multi_bar_price_window, n, spike=1.0, bbb_price=1.0):
+    """AAAUSDT: n-1 Kerzen bei Preis=1.0 (log=0), letzte Kerze bei exp(spike).
+    BBBUSDT konstant -> Spread = log(AAA) (der -0.5*log(BBB)-Term faellt weg,
+    log(1)=0). Der rollierende Z-Score der letzten Kerze ist dann -- aus der
+    Populations-Std-Formel herleitbar, unabhaengig vom genauen Wert von
+    spike -- exakt sign(spike) * sqrt(n-1). Macht die Ziel-Z-Werte der alten
+    (eingefrorenen) Tests exakt reproduzierbar: n=2->z=1.0, n=5->z=2.0,
+    n=10->z=3.0, n=26->z=5.0."""
+    aaa = [1.0] * (n - 1) + [float(np.exp(spike))]
+    bbb = [bbb_price] * n
+    return make_multi_bar_price_window({"AAAUSDT": aaa, "BBBUSDT": bbb})
+
+
+def _near_zero_z_window(make_multi_bar_price_window, last=0.05):
+    """Alternierende, verrauschte AAAUSDT-Historie (Std != 0) plus eine
+    letzte Kerze nahe am rollierenden Mittelwert (~0) -> kleiner, aber nicht
+    exakt-0 Z-Score (fuer Target-Exit-Tests, die |z| <= exit_z brauchen).
+    9 Kerzen, bollinger_window_candles muss dazu passend auf 9 gesetzt werden."""
+    aaa_log = [1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, last]
+    aaa = [float(np.exp(lp)) for lp in aaa_log]
+    bbb = [1.0] * len(aaa_log)
+    return make_multi_bar_price_window({"AAAUSDT": aaa, "BBBUSDT": bbb})
+
+
 class TestGenerateEntries:
-    def test_no_signal_below_entry_threshold(self, make_spread_definition, make_bar_context, make_price_window):
+    def test_no_signal_below_entry_threshold(self, make_spread_definition, make_bar_context, make_multi_bar_price_window):
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(entry_z=2.0, stop_z=4.0)
-        definition = make_spread_definition(mu=0.0, sigma=1.0)
-        prices = make_price_window({"AAAUSDT": np.exp(1.0), "BBBUSDT": 1.0})  # z=1.0 < entry_z
+        params = BasketParams(entry_z=2.0, stop_z=4.0, bollinger_window_candles=2)
+        definition = make_spread_definition()
+        prices = _zeros_and_spike_window(make_multi_bar_price_window, n=2)  # z=1.0 < entry_z
         ctx = make_bar_context(params=params, prices=prices)
         signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
         assert signals == []
 
-    def test_signal_between_entry_and_stop(self, make_spread_definition, make_bar_context, make_price_window):
+    def test_signal_between_entry_and_stop(self, make_spread_definition, make_bar_context, make_multi_bar_price_window):
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(entry_z=2.0, stop_z=4.0)
-        definition = make_spread_definition(mu=0.0, sigma=1.0)
-        prices = make_price_window({"AAAUSDT": np.exp(3.0), "BBBUSDT": 1.0})  # z=3.0
+        params = BasketParams(entry_z=2.0, stop_z=4.0, bollinger_window_candles=10)
+        definition = make_spread_definition()
+        prices = _zeros_and_spike_window(make_multi_bar_price_window, n=10)  # z=3.0
         ctx = make_bar_context(params=params, prices=prices)
         signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
         assert len(signals) == 1
         assert signals[0].direction == -1  # z>0 -> Spread SHORT
         assert signals[0].signal_value == pytest.approx(3.0)
 
-    def test_no_signal_when_already_beyond_stop_threshold(self, make_spread_definition, make_bar_context, make_price_window):
+    def test_no_signal_when_already_beyond_stop_threshold(self, make_spread_definition, make_bar_context, make_multi_bar_price_window):
         """Regressionstest fuer einen echten Bug: ein Signal, dessen Z-Score
         schon jenseits von stop_z liegt, ist per Definition ungueltig (stop_z
         ist die Invalidierungsschwelle) -- ein Entry HIER wuerde im
         naechsten Bar sofort wieder auf den Stop laufen. generate_entries
         MUSS solche Kandidaten verwerfen."""
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(entry_z=2.0, stop_z=4.0)
-        definition = make_spread_definition(mu=0.0, sigma=1.0)
-        prices = make_price_window({"AAAUSDT": np.exp(4.8), "BBBUSDT": 1.0})  # z=4.8 > stop_z
+        params = BasketParams(entry_z=2.0, stop_z=4.0, bollinger_window_candles=26)
+        definition = make_spread_definition()
+        prices = _zeros_and_spike_window(make_multi_bar_price_window, n=26)  # z=5.0 > stop_z
         ctx = make_bar_context(params=params, prices=prices)
         signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
         assert signals == []
 
-    def test_extreme_zscore_allowed_when_stop_z_is_none(self, make_spread_definition, make_bar_context, make_price_window):
+    def test_extreme_zscore_allowed_when_stop_z_is_none(self, make_spread_definition, make_bar_context, make_multi_bar_price_window):
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(entry_z=2.0, stop_z=None)
-        definition = make_spread_definition(mu=0.0, sigma=1.0)
-        prices = make_price_window({"AAAUSDT": np.exp(4.8), "BBBUSDT": 1.0})
+        params = BasketParams(entry_z=2.0, stop_z=None, bollinger_window_candles=26)
+        definition = make_spread_definition()
+        prices = _zeros_and_spike_window(make_multi_bar_price_window, n=26)  # z=5.0
         ctx = make_bar_context(params=params, prices=prices)
         signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
         assert len(signals) == 1
 
     def test_skips_definition_when_asset_at_position_limit(
-        self, make_spread_definition, make_bar_context, make_price_window, make_position,
+        self, make_spread_definition, make_bar_context, make_multi_bar_price_window, make_position,
     ):
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(entry_z=2.0, stop_z=4.0, max_positions_per_asset=1)
-        definition = make_spread_definition(mu=0.0, sigma=1.0, asset_ids=(1, 2))
+        params = BasketParams(entry_z=2.0, stop_z=4.0, max_positions_per_asset=1, bollinger_window_candles=10)
+        definition = make_spread_definition(asset_ids=(1, 2))
         existing = make_position(
             params=params,
             spread=make_spread_definition(asset_ids=(1, 99), symbols=("AAAUSDT", "ZZZUSDT")),
         )
-        prices = make_price_window({"AAAUSDT": np.exp(3.0), "BBBUSDT": 1.0})
+        prices = _zeros_and_spike_window(make_multi_bar_price_window, n=10)  # z=3.0, waere sonst ein gueltiges Signal
         ctx = make_bar_context(params=params, prices=prices, open_positions=[existing])
         signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
         assert signals == []
 
-    def test_direction_sign_convention_for_negative_zscore(self, make_spread_definition, make_bar_context, make_price_window):
+    def test_direction_sign_convention_for_negative_zscore(self, make_spread_definition, make_bar_context, make_multi_bar_price_window):
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(entry_z=2.0, stop_z=4.0)
-        definition = make_spread_definition(mu=0.0, sigma=1.0)
-        prices = make_price_window({"AAAUSDT": np.exp(-3.0), "BBBUSDT": 1.0})  # z<0 -> LONG
+        params = BasketParams(entry_z=2.0, stop_z=4.0, bollinger_window_candles=10)
+        definition = make_spread_definition()
+        prices = _zeros_and_spike_window(make_multi_bar_price_window, n=10, spike=-1.0)  # z=-3.0 -> LONG
         ctx = make_bar_context(params=params, prices=prices)
         signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
         assert signals[0].direction == 1
 
-    def test_skips_definition_with_missing_price(self, make_spread_definition, make_bar_context, make_price_window):
+    def test_skips_definition_with_missing_price(self, make_spread_definition, make_bar_context, make_multi_bar_price_window):
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(entry_z=2.0, stop_z=4.0)
-        definition = make_spread_definition(mu=0.0, sigma=1.0)
-        prices = make_price_window({"AAAUSDT": np.nan, "BBBUSDT": 1.0})
+        params = BasketParams(entry_z=2.0, stop_z=4.0, bollinger_window_candles=2)
+        definition = make_spread_definition()
+        prices = make_multi_bar_price_window({"AAAUSDT": [1.0, np.nan], "BBBUSDT": [1.0, 1.0]})
         ctx = make_bar_context(params=params, prices=prices)
         signals = strategy.generate_entries(ctx=ctx, state=_state([definition]), params=params)
         assert signals == []
 
 
 class TestCheckExit:
-    def test_no_exit_before_min_holding(self, make_bar_context, make_price_window, make_position):
+    def test_no_exit_before_min_holding(self, make_bar_context, make_multi_bar_price_window, make_position):
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(exit_z=0.5, min_holding_candles=5)
+        params = BasketParams(exit_z=0.5, min_holding_candles=5, bollinger_window_candles=9)
         position = make_position(params=params, bars_held=2)
-        prices = make_price_window({"AAAUSDT": np.exp(0.1), "BBBUSDT": 1.0})  # waere ein Target-Exit
+        prices = _near_zero_z_window(make_multi_bar_price_window)  # waere sonst ein Target-Exit
         ctx = make_bar_context(params=params, prices=prices)
         assert not strategy.check_exit(position=position, ctx=ctx, params=params).should_exit
 
-    def test_target_exit_after_min_holding(self, make_bar_context, make_price_window, make_position):
+    def test_target_exit_after_min_holding(self, make_bar_context, make_multi_bar_price_window, make_position):
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(exit_z=0.5, min_holding_candles=1)
+        params = BasketParams(exit_z=0.5, min_holding_candles=1, bollinger_window_candles=9)
         position = make_position(params=params, bars_held=1)
-        prices = make_price_window({"AAAUSDT": np.exp(0.1), "BBBUSDT": 1.0})
+        prices = _near_zero_z_window(make_multi_bar_price_window)  # |z| ~ 0.047 <= exit_z
         ctx = make_bar_context(params=params, prices=prices)
         decision = strategy.check_exit(position=position, ctx=ctx, params=params)
         assert decision.should_exit
         assert decision.reason == "target"
 
-    def test_no_exit_when_still_far_from_mean(self, make_bar_context, make_price_window, make_position):
+    def test_no_exit_when_still_far_from_mean(self, make_bar_context, make_multi_bar_price_window, make_position):
         strategy = PairwiseZScoreStrategy()
-        params = BasketParams(exit_z=0.5, min_holding_candles=1)
+        params = BasketParams(exit_z=0.5, min_holding_candles=1, bollinger_window_candles=5)
         position = make_position(params=params, bars_held=5)
-        prices = make_price_window({"AAAUSDT": np.exp(2.0), "BBBUSDT": 1.0})
+        prices = _zeros_and_spike_window(make_multi_bar_price_window, n=5)  # z=2.0 > exit_z
         ctx = make_bar_context(params=params, prices=prices)
         assert not strategy.check_exit(position=position, ctx=ctx, params=params).should_exit
 
