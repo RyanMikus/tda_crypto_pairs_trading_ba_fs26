@@ -17,8 +17,8 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from src.backtest.cliques import CliqueSnapshot
-    from src.backtest.config import BacktestConfig, BasketParams
+    from Src.backtest.cliques import CliqueSnapshot
+    from Src.backtest.config import BacktestConfig, BasketParams
 
 
 EXIT_REASONS = (

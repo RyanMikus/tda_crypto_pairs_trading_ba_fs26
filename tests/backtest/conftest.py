@@ -14,9 +14,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.backtest.cliques import CliqueTimeline
-from src.backtest.config import BasketParams
-from src.backtest.types import BarContext, Leg, Position, PriceWindow, SpreadDefinition
+from Src.backtest.cliques import CliqueTimeline
+from Src.backtest.config import BasketParams
+from Src.backtest.types import BarContext, Leg, Position, PriceWindow, SpreadDefinition
 
 SYMBOLS = ["AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT"]
 N_CANDLES = 1600  # ~5.5 Tage bei 5-Min-Kerzen
@@ -187,7 +187,7 @@ def register_strategy():
     """Registriert eine Test-Strategie in STRATEGY_REGISTRY und entfernt sie
     nach dem Test wieder -- verhindert Verschmutzung des globalen Registry-
     Dicts zwischen Tests."""
-    from src.backtest.strategy import STRATEGY_REGISTRY
+    from Src.backtest.strategy import STRATEGY_REGISTRY
 
     registered = []
 

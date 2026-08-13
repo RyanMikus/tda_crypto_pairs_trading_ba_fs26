@@ -19,10 +19,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.backtest import metrics as bt_metrics
-from src.backtest.config import BacktestConfig
-from src.backtest.types import BacktestResult
-from src.config import BACKTESTS_DIR
+from Src.backtest import metrics as bt_metrics
+from Src.backtest.config import BacktestConfig
+from Src.backtest.types import BacktestResult
+from Src.config import BACKTESTS_DIR
 
 _INDEX_COLUMNS = [
     "run_id", "created_at", "label", "description", "strategy_name", "clique_variant",

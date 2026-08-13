@@ -3,9 +3,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.backtest import metrics as m
-from src.backtest.config import BacktestConfig, BasketParams, DateRange
-from src.backtest.engine import BacktestEngine
+from Src.backtest import metrics as m
+from Src.backtest.config import BacktestConfig, BasketParams, DateRange
+from Src.backtest.engine import BacktestEngine
 
 
 class TestMaxDrawdownDetail:

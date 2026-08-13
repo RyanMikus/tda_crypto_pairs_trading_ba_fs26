@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.signals import spread as sp
+from Src.signals import spread as sp
 
 
 class TestHedgeRatioAndSpread:

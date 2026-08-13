@@ -18,9 +18,9 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from src.backtest.cliques import CliqueSnapshot
-from src.backtest.config import BasketParams
-from src.backtest.types import BarContext, EntrySignal, ExitDecision, NO_EXIT, Position, SpreadDefinition
+from Src.backtest.cliques import CliqueSnapshot
+from Src.backtest.config import BasketParams
+from Src.backtest.types import BarContext, EntrySignal, ExitDecision, NO_EXIT, Position, SpreadDefinition
 
 
 @dataclass
@@ -169,7 +169,7 @@ class PairwiseZScoreStrategy(BaseSpreadZScoreStrategy):
     def build_definitions(
         self, *, snapshot: CliqueSnapshot, window: pd.DataFrame, params: BasketParams,
     ) -> tuple[list[SpreadDefinition], list[dict]]:
-        from src.signals import spread as sp
+        from Src.signals import spread as sp
 
         symbols = list(snapshot.symbols)
         sym_to_asset_id = dict(zip(snapshot.symbols, snapshot.asset_ids))
@@ -238,7 +238,7 @@ class ClusterSpreadStrategy(BaseSpreadZScoreStrategy):
     def build_definitions(
         self, *, snapshot: CliqueSnapshot, window: pd.DataFrame, params: BasketParams,
     ) -> tuple[list[SpreadDefinition], list[dict]]:
-        from src.signals import spread as sp
+        from Src.signals import spread as sp
 
         symbols = list(snapshot.symbols)
         sym_to_asset_id = dict(zip(snapshot.symbols, snapshot.asset_ids))

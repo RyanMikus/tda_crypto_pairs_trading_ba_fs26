@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from src.backtest import metrics as bt_metrics
-from src.backtest.types import BacktestResult
+from Src.backtest import metrics as bt_metrics
+from Src.backtest.types import BacktestResult
 
 
 def plot_equity_and_drawdown(

@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from src.backtest.types import EntrySignal, Leg, Position
+from Src.backtest.types import EntrySignal, Leg, Position
 
 if TYPE_CHECKING:
-    from src.backtest.cliques import CliqueSnapshot
-    from src.backtest.config import BasketParams
+    from Src.backtest.cliques import CliqueSnapshot
+    from Src.backtest.config import BasketParams
 
 FORCED_EXIT_REASONS = {"data_gap", "end_of_backtest"}
 

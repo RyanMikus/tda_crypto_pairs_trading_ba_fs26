@@ -1,0 +1,303 @@
+"""Schneller Walk-Forward-Optuna-Tuner fuer die Bollinger-Band-Pairtrading-
+Strategie (bollinger_pairtrading_engine.py).
+
+Ersetzt tune_bollinger.py: gleiches Walk-Forward-Prinzip, aber der Nutzer
+gibt nur noch n_windows an -- train_days/val_days/step_days/embargo_days
+werden automatisch aus dem verfuegbaren Zeitraum abgeleitet (siehe
+tuning_common.auto_walkforward_layout), bleiben aber ueberschreibbar.
+
+Zeitliche Trennung: train_val_start/end (Walk-Forward-Suchraum) vs.
+    test_start/end (finaler, waehrend des Tunings nie beruehrter
+    Testzeitraum) -- vor jedem Trial prueft
+    pairtrading_engine.assert_no_test_period_leakage.
+
+Theoriegeleitet vs. tunbar (Data-Snooping-Vermeidung, siehe Ernie Chan):
+    NICHT Teil der Optuna-Suche: min_persistence (Clique-Discovery,
+        vorgelagert), ADF-autolag/KPSS-regression/FDR-alpha.
+    TEIL der Optuna-Suche: lookback_candles, n_std, exit_lookback_candles,
+        trade_mode, max_holding_hours, max_concurrent_positions,
+        hedge_lookback_candles.
+
+Kosten: Src.config.BINANCE_FEE_PRESETS_BPS["standard"] (10.0 bps) als
+Default, siehe tuning_common.resolve_fee_bps -- per fee_preset umschaltbar.
+
+Beste Parameter je Basket werden in
+data/processed/tuning/best_params_bollinger.json abgelegt UND per
+write_best_params_to_engine_module() als BEST_PARAMS-Referenzblock in
+bollinger_pairtrading_engine.py geschrieben.
+
+Persistenter Optuna-Storage (SQLite): quick_tune_bollinger_study.db, neben
+diesem Modul. optuna-dashboard sqlite:///quick_tune_bollinger_study.db --port 8081.
+
+Windows: KMP_DUPLICATE_LIB_OK=TRUE wird vorsorglich gesetzt.
+"""
+
+import os
+
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+import bollinger_pairtrading_engine as bpe
+import pairtrading_engine as pte
+import tuning_common as tc
+
+DEFAULT_STORAGE_PATH = Path(__file__).resolve().parent / "quick_tune_bollinger_study.db"
+STRATEGY_NAME = "bollinger"
+
+
+@dataclass
+class QuickTuneResult:
+    """Ergebnis eines vollstaendigen tune-Laufs fuer EINEN Basket."""
+
+    basket: str
+    study: "optuna.Study"
+    trials_df: pd.DataFrame
+    best_params: dict
+    best_objective: float
+    n_trials_total: int
+    layout: tc.WalkForwardLayout
+
+
+def _objective_metric(fold_returns: list[float]) -> float:
+    if not fold_returns:
+        return -np.inf
+    arr = np.array(fold_returns, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if len(arr) == 0:
+        return -np.inf
+    return float(arr.mean())
+
+
+def tune_bollinger_strategy(
+    *,
+    basket: str,
+    cliques_df: pd.DataFrame,
+    ohlcv_df: pd.DataFrame,
+    id_to_symbol: dict,
+    timestamp_column: str,
+    asset_id_column: str,
+    close_column: str,
+    train_val_start,
+    train_val_end,
+    test_start,
+    test_end,
+    n_windows: int = 4,
+    train_days: int | None = None,
+    val_days: int | None = None,
+    step_days: int | None = None,
+    embargo_days: int | None = None,
+    n_trials: int = 40,
+    seed: int = 42,
+    fee_preset: str | float = "standard",
+    output_path=None,
+    study_name: str | None = None,
+    storage_path: Path | str | None = None,
+    use_persistent_storage: bool = True,
+    fixed_params: dict | None = None,
+    write_to_engine_module: bool = True,
+) -> QuickTuneResult:
+    """Fuehrt das schnelle Walk-Forward-Tuning der Bollinger-Band-Strategie
+    fuer EINEN Basket durch -- siehe quick_tune_ewma.tune_ewma_strategy fuer
+    das gemeinsame Grundprinzip.
+
+    Suchraum, sofern nicht ueber fixed_params fixiert:
+        lookback_candles: kategorial {20, 40, 60, 80, 100, 144}
+        n_std: float in [1.5, 3.5]
+        exit_lookback_candles: kategorial {100, 200, 400, 600, 1000}
+        trade_mode: kategorial {"max_only", "all_significant"}
+        max_holding_hours: float in [4, 48]
+        max_concurrent_positions: int in [3, 15]
+        hedge_lookback_candles: kategorial {60, 120, 240}
+
+    Args:
+        n_windows, train_days, val_days, step_days, embargo_days: siehe
+            quick_tune_ewma.tune_ewma_strategy -- automatisches Layout,
+            manuell ueberschreibbar.
+        fee_preset: siehe tuning_common.resolve_fee_bps.
+        write_to_engine_module: True (Default) = beste Parameter zusaetzlich
+            als BEST_PARAMS-Referenzblock in bollinger_pairtrading_engine.py
+            schreiben.
+
+    Returns:
+        QuickTuneResult mit Study, Trials-DataFrame, besten Parametern,
+        Objective-Wert und dem verwendeten WalkForwardLayout.
+    """
+    import optuna
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    fee_bps = tc.resolve_fee_bps(fee_preset)
+
+    fixed_params = fixed_params or {}
+    known_keys = {
+        "lookback_candles", "n_std", "exit_lookback_candles", "trade_mode",
+        "max_holding_hours", "max_concurrent_positions", "hedge_lookback_candles",
+    }
+    unknown_fixed = set(fixed_params) - known_keys
+    if unknown_fixed:
+        raise ValueError(f"fixed_params enthaelt unbekannte Keys: {sorted(unknown_fixed)}")
+
+    layout = tc.auto_walkforward_layout(train_val_start, train_val_end, n_windows=n_windows)
+    effective_train_days = train_days if train_days is not None else layout.train_days
+    effective_val_days = val_days if val_days is not None else layout.val_days
+    effective_step_days = step_days if step_days is not None else layout.step_days
+    effective_embargo_days = embargo_days if embargo_days is not None else layout.embargo_days
+
+    windows = pte.generate_walkforward_windows(
+        train_val_start, train_val_end,
+        train_days=effective_train_days, val_days=effective_val_days,
+        step_days=effective_step_days, embargo_days=effective_embargo_days,
+    )
+    if not windows:
+        raise ValueError(
+            f"Keine Walk-Forward-Fenster erzeugt fuer [{train_val_start}, {train_val_end}) "
+            f"mit train_days={effective_train_days}, val_days={effective_val_days}, "
+            f"step_days={effective_step_days}, embargo_days={effective_embargo_days} -- "
+            f"Zeitraum vergroessern oder n_windows verkleinern."
+        )
+    pte.assert_no_test_period_leakage(windows, test_start, test_end)
+
+    print(f"Walk-Forward-Layout fuer '{basket}' (n_windows={n_windows} angefragt, "
+          f"{len(windows)} tatsaechlich erzeugt): train_days={effective_train_days}, "
+          f"val_days={effective_val_days}, step_days={effective_step_days}, "
+          f"embargo_days={effective_embargo_days}")
+
+    trial_log: list[dict] = []
+    n_new_trials_seen = 0
+    t_start = time.perf_counter()
+
+    def objective(trial: "optuna.Trial") -> float:
+        nonlocal n_new_trials_seen
+
+        lookback_candles = fixed_params.get(
+            "lookback_candles", trial.suggest_categorical("lookback_candles", [20, 40, 60, 80, 100, 144]),
+        )
+        n_std = fixed_params.get("n_std", trial.suggest_float("n_std", 1.5, 3.5))
+        exit_lookback_candles = fixed_params.get(
+            "exit_lookback_candles", trial.suggest_categorical("exit_lookback_candles", [100, 200, 400, 600, 1000]),
+        )
+        trade_mode = fixed_params.get(
+            "trade_mode", trial.suggest_categorical("trade_mode", ["max_only", "all_significant"]),
+        )
+        max_holding_hours = fixed_params.get(
+            "max_holding_hours", trial.suggest_float("max_holding_hours", 4.0, 48.0),
+        )
+        max_concurrent_positions = fixed_params.get(
+            "max_concurrent_positions", trial.suggest_int("max_concurrent_positions", 3, 15),
+        )
+        hedge_lookback_candles = fixed_params.get(
+            "hedge_lookback_candles", trial.suggest_categorical("hedge_lookback_candles", [60, 120, 240]),
+        )
+
+        n_new_trials_seen += 1
+        elapsed = time.perf_counter() - t_start
+        eta_str = ""
+        if n_new_trials_seen > 1:
+            eta = elapsed / (n_new_trials_seen - 1) * (n_trials - (n_new_trials_seen - 1))
+            eta_str = f" | ~{eta:.0f}s verbleibend"
+        print(f"[Trial {n_new_trials_seen}/{n_trials}] (Study-Trial-Nr. {trial.number}) "
+              f"lookback={lookback_candles} n_std={n_std:.2f} exit_lookback={exit_lookback_candles} "
+              f"trade_mode={trade_mode} max_holding_hours={max_holding_hours:.1f} "
+              f"max_concurrent={max_concurrent_positions} hedge_lookback={hedge_lookback_candles}{eta_str}")
+
+        pte.assert_no_test_period_leakage(windows, test_start, test_end)
+        max_holding_candles = max(1, int(round(max_holding_hours * 60 / 5)))
+        fold_returns = []
+
+        for wi, w in enumerate(windows, start=1):
+            trades_df = bpe.run_bollinger_backtest(
+                cliques_df=cliques_df, ohlcv_df=ohlcv_df, id_to_symbol=id_to_symbol,
+                timestamp_column=timestamp_column, asset_id_column=asset_id_column, close_column=close_column,
+                start_date=w["val_start"], end_date=w["val_end"] - pd.Timedelta(days=1),
+                lookback_candles=lookback_candles, n_std=n_std,
+                exit_lookback_candles=exit_lookback_candles,
+                max_holding_candles=max_holding_candles, fee_bps=fee_bps,
+                trade_mode=trade_mode, hedge_lookback_candles=hedge_lookback_candles,
+            )
+            equity_curve = pte.compute_equity_curve(
+                trades_df, initial_capital=tc.FIXED_INITIAL_CAPITAL,
+                max_concurrent_positions=max_concurrent_positions,
+            )
+            stats = pte.compute_backtest_stats(trades_df, equity_curve)
+            fold_returns.append(stats["total_return"])
+            print(f"    Fenster {wi}/{len(windows)} [{w['val_start'].date()}, {w['val_end'].date()}): "
+                  f"{stats['n_trades']} Trades, total_return={stats['total_return']:.4f}")
+
+        objective_value = _objective_metric(fold_returns)
+        arr = np.array(fold_returns, dtype=float)
+        arr_finite = arr[np.isfinite(arr)]
+
+        print(f"  -> ABGESCHLOSSEN: objective={objective_value:.4f}\n")
+
+        trial_log.append({
+            "trial_number": trial.number, "lookback_candles": lookback_candles,
+            "n_std": n_std, "exit_lookback_candles": exit_lookback_candles, "trade_mode": trade_mode,
+            "max_holding_hours": max_holding_hours, "max_concurrent_positions": max_concurrent_positions,
+            "hedge_lookback_candles": hedge_lookback_candles,
+            "status": "completed", "objective": objective_value,
+            "mean_fold_return": float(arr_finite.mean()) if len(arr_finite) else np.nan,
+            "std_fold_return": float(arr_finite.std(ddof=0)) if len(arr_finite) else np.nan,
+        })
+        return objective_value
+
+    if use_persistent_storage:
+        effective_study_name = study_name or f"{basket}_bollinger"
+        resolved_storage_path = Path(storage_path) if storage_path is not None else DEFAULT_STORAGE_PATH
+        study = tc.create_or_load_study(effective_study_name, storage_path=resolved_storage_path, seed=seed)
+        n_before = len(study.trials)
+        print(f"Quick-Tune-Bollinger-Study '{effective_study_name}' geladen/erstellt "
+              f"({n_before} Trials vorhanden, sqlite:///{resolved_storage_path.resolve()}).")
+    else:
+        sampler = optuna.samplers.TPESampler(seed=seed)
+        study = optuna.create_study(direction="maximize", sampler=sampler)
+
+    print(f"Quick-Tuning startet: {n_trials} neue Trials, {len(windows)} Walk-Forward-Fenster pro Trial.\n")
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+    print(f"Quick-Tuning fertig in {time.perf_counter() - t_start:.1f}s.")
+
+    trials_df = pd.DataFrame(trial_log)
+    if output_path is not None:
+        trials_df.to_parquet(output_path, index=False)
+
+    n_completed = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE)
+    if n_completed == 0:
+        raise RuntimeError(
+            f"Kein einziger Trial ist abgeschlossen -- pruefen, ob cliques_df/ohlcv_df "
+            f"fuer Basket '{basket}' im Zeitraum [{train_val_start}, {train_val_end}) Daten enthalten."
+        )
+
+    best_params = dict(study.best_params)
+    best_objective = float(study.best_value)
+    tc.save_best_params(
+        STRATEGY_NAME, basket, best_params, objective=best_objective, n_trials=len(study.trials),
+    )
+    if write_to_engine_module:
+        tc.write_best_params_to_engine_module(
+            STRATEGY_NAME, Path(__file__).resolve().parent / "bollinger_pairtrading_engine.py",
+        )
+
+    return QuickTuneResult(
+        basket=basket, study=study, trials_df=trials_df,
+        best_params=best_params, best_objective=best_objective,
+        n_trials_total=n_trials, layout=layout,
+    )
+
+
+def summarize_quick_tune_results(results: list[QuickTuneResult]) -> None:
+    """Druckt eine kurze Zusammenfassung ueber mehrere QuickTuneResult-
+    Objekte (i.d.R. eines pro Basket)."""
+    print("=" * 78)
+    print("ZUSAMMENFASSUNG: Quick-Tuning Bollinger-Band-Strategie")
+    print("=" * 78)
+    for r in results:
+        print(f"\nBasket: {r.basket}")
+        print(f"  Fenster (angefragt/verwendet): n_windows={r.layout.n_windows}")
+        print(f"  Trials gesamt:   {r.n_trials_total}")
+        print(f"  Bestes Objective: {r.best_objective:.4f}")
+        print(f"  Beste Parameter: {r.best_params}")
+    print("\n" + "=" * 78)

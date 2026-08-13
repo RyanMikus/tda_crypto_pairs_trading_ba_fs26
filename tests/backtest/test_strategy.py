@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.backtest.config import BasketParams
-from src.backtest.strategy import (
+from Src.backtest.config import BasketParams
+from Src.backtest.strategy import (
     ClusterSpreadStrategy,
     PairwiseZScoreStrategy,
     StrategyState,
@@ -195,7 +195,7 @@ class TestPairwiseBuildDefinitions:
         snapshot.size = 4
         snapshot.lookback_days = 7
 
-        from src.backtest.types import PriceWindow
+        from Src.backtest.types import PriceWindow
         arrays = {"close": window.to_numpy()}
         symbol_to_col = {s: i for i, s in enumerate(window.columns)}
         prices = PriceWindow(arrays, symbol_to_col, window.index, len(window) - 1)

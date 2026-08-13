@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
-from src.config import CANDLE_MINUTES
+from Src.config import CANDLE_MINUTES
 
 _TIMEDELTA_AUTO = "auto"
 

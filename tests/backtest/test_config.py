@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from src.backtest.config import BacktestConfig, BasketParams, DateRange, split_calibration_backtest
+from Src.backtest.config import BacktestConfig, BasketParams, DateRange, split_calibration_backtest
 
 
 class TestSplitCalibrationBacktest:

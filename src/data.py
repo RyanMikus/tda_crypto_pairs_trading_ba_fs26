@@ -16,7 +16,7 @@ from typing import Sequence
 
 import pandas as pd
 
-from src.config import ASSETS_PATH, OHLCV_DIR
+from Src.config import ASSETS_PATH, OHLCV_DIR
 
 OHLCV_FIELDS = ("open", "high", "low", "close", "volume_base", "volume_quote", "trade_count")
 
