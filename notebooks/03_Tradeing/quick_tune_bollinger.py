@@ -100,29 +100,47 @@ def tune_bollinger_strategy(
     storage_path: Path | str | None = None,
     use_persistent_storage: bool = True,
     fixed_params: dict | None = None,
+    search_ranges: dict | None = None,
     write_to_engine_module: bool = True,
+    open_dashboard: bool = True,
+    dashboard_port: int = tc.DASHBOARD_PORTS["bollinger"],
 ) -> QuickTuneResult:
     """Fuehrt das schnelle Walk-Forward-Tuning der Bollinger-Band-Strategie
     fuer EINEN Basket durch -- siehe quick_tune_ewma.tune_ewma_strategy fuer
     das gemeinsame Grundprinzip.
 
-    Suchraum, sofern nicht ueber fixed_params fixiert:
-        lookback_candles: kategorial {20, 40, 60, 80, 100, 144}
+    Default-Suchraum, sofern ein Parameter weder in fixed_params noch in
+    search_ranges auftaucht (lookback_candles/exit_lookback_candles/
+    hedge_lookback_candles sind int-Ranges, keine festen Stuetzstellen mehr
+    -- konsistent mit quick_tune_ewma/quick_tune_garch und direkt per
+    search_ranges als (lo, hi) ueberschreibbar):
+        lookback_candles: int in [20, 144]
         n_std: float in [1.5, 3.5]
-        exit_lookback_candles: kategorial {100, 200, 400, 600, 1000}
+        exit_lookback_candles: int in [100, 1000]
         trade_mode: kategorial {"max_only", "all_significant"}
         max_holding_hours: float in [4, 48]
         max_concurrent_positions: int in [3, 15]
-        hedge_lookback_candles: kategorial {60, 120, 240}
+        hedge_lookback_candles: int in [60, 240]
 
     Args:
         n_windows, train_days, val_days, step_days, embargo_days: siehe
             quick_tune_ewma.tune_ewma_strategy -- automatisches Layout,
             manuell ueberschreibbar.
         fee_preset: siehe tuning_common.resolve_fee_bps.
+        fixed_params: optionales dict, Teilmenge der sieben Suchparameter --
+            fixierte Parameter werden NICHT von Optuna gesucht.
+        search_ranges: optionales dict {param_name: (lo, hi)} (bzw.
+            {param_name: [optionen]} fuer trade_mode) -- ueberschreibt NUR
+            den Suchbereich eines weiterhin gesuchten Parameters (siehe
+            tuning_common.suggest_param).
         write_to_engine_module: True (Default) = beste Parameter zusaetzlich
             als BEST_PARAMS-Referenzblock in bollinger_pairtrading_engine.py
             schreiben.
+        open_dashboard: True (Default) = optuna-dashboard fuer diese Study
+            automatisch starten (falls noch nicht gestartet) und den
+            Browser-Tab oeffnen, siehe tuning_common.ensure_dashboard_running.
+        dashboard_port: Port fuer das Bollinger-Dashboard, siehe
+            tuning_common.DASHBOARD_PORTS.
 
     Returns:
         QuickTuneResult mit Study, Trials-DataFrame, besten Parametern,
@@ -134,6 +152,7 @@ def tune_bollinger_strategy(
     fee_bps = tc.resolve_fee_bps(fee_preset)
 
     fixed_params = fixed_params or {}
+    search_ranges = search_ranges or {}
     known_keys = {
         "lookback_candles", "n_std", "exit_lookback_candles", "trade_mode",
         "max_holding_hours", "max_concurrent_positions", "hedge_lookback_candles",
@@ -141,6 +160,9 @@ def tune_bollinger_strategy(
     unknown_fixed = set(fixed_params) - known_keys
     if unknown_fixed:
         raise ValueError(f"fixed_params enthaelt unbekannte Keys: {sorted(unknown_fixed)}")
+    unknown_ranges = set(search_ranges) - known_keys
+    if unknown_ranges:
+        raise ValueError(f"search_ranges enthaelt unbekannte Keys: {sorted(unknown_ranges)}")
 
     layout = tc.auto_walkforward_layout(train_val_start, train_val_end, n_windows=n_windows)
     effective_train_days = train_days if train_days is not None else layout.train_days
@@ -174,25 +196,17 @@ def tune_bollinger_strategy(
     def objective(trial: "optuna.Trial") -> float:
         nonlocal n_new_trials_seen
 
-        lookback_candles = fixed_params.get(
-            "lookback_candles", trial.suggest_categorical("lookback_candles", [20, 40, 60, 80, 100, 144]),
+        sp = lambda name, kind, default_range: tc.suggest_param(  # noqa: E731
+            trial, name, kind=kind, default_range=default_range,
+            fixed_params=fixed_params, search_ranges=search_ranges,
         )
-        n_std = fixed_params.get("n_std", trial.suggest_float("n_std", 1.5, 3.5))
-        exit_lookback_candles = fixed_params.get(
-            "exit_lookback_candles", trial.suggest_categorical("exit_lookback_candles", [100, 200, 400, 600, 1000]),
-        )
-        trade_mode = fixed_params.get(
-            "trade_mode", trial.suggest_categorical("trade_mode", ["max_only", "all_significant"]),
-        )
-        max_holding_hours = fixed_params.get(
-            "max_holding_hours", trial.suggest_float("max_holding_hours", 4.0, 48.0),
-        )
-        max_concurrent_positions = fixed_params.get(
-            "max_concurrent_positions", trial.suggest_int("max_concurrent_positions", 3, 15),
-        )
-        hedge_lookback_candles = fixed_params.get(
-            "hedge_lookback_candles", trial.suggest_categorical("hedge_lookback_candles", [60, 120, 240]),
-        )
+        lookback_candles = sp("lookback_candles", "int", (20, 144))
+        n_std = sp("n_std", "float", (1.5, 3.5))
+        exit_lookback_candles = sp("exit_lookback_candles", "int", (100, 1000))
+        trade_mode = sp("trade_mode", "categorical", ["max_only", "all_significant"])
+        max_holding_hours = sp("max_holding_hours", "float", (4.0, 48.0))
+        max_concurrent_positions = sp("max_concurrent_positions", "int", (3, 15))
+        hedge_lookback_candles = sp("hedge_lookback_candles", "int", (60, 240))
 
         n_new_trials_seen += 1
         elapsed = time.perf_counter() - t_start
@@ -246,12 +260,20 @@ def tune_bollinger_strategy(
         return objective_value
 
     if use_persistent_storage:
-        effective_study_name = study_name or f"{basket}_bollinger"
+        # Suchraum-Signatur als Suffix -- siehe tuning_common.search_space_signature
+        # Docstring: verhindert Optuna's "dynamic value space"-Fehler, falls
+        # sich fixed_params/search_ranges seit einem frueheren Lauf auf
+        # demselben (Basket, Strategie) geaendert haben.
+        base_study_name = study_name or f"{basket}_bollinger"
+        signature = tc.search_space_signature(fixed_params, search_ranges)
+        effective_study_name = f"{base_study_name}_{signature}"
         resolved_storage_path = Path(storage_path) if storage_path is not None else DEFAULT_STORAGE_PATH
         study = tc.create_or_load_study(effective_study_name, storage_path=resolved_storage_path, seed=seed)
         n_before = len(study.trials)
         print(f"Quick-Tune-Bollinger-Study '{effective_study_name}' geladen/erstellt "
               f"({n_before} Trials vorhanden, sqlite:///{resolved_storage_path.resolve()}).")
+        if open_dashboard:
+            tc.ensure_dashboard_running(resolved_storage_path, port=dashboard_port)
     else:
         sampler = optuna.samplers.TPESampler(seed=seed)
         study = optuna.create_study(direction="maximize", sampler=sampler)
@@ -271,7 +293,11 @@ def tune_bollinger_strategy(
             f"fuer Basket '{basket}' im Zeitraum [{train_val_start}, {train_val_end}) Daten enthalten."
         )
 
-    best_params = dict(study.best_params)
+    # study.best_params enthaelt NUR die von Optuna gesuchten Keys -- Parameter,
+    # die ueber fixed_params fixiert waren, tauchen dort nicht auf. Ohne sie
+    # hier wieder einzumischen wuerde der gespeicherte/persistierte best_params-
+    # Satz unvollstaendig sein (run_bollinger_backtest braucht ALLE Keys).
+    best_params = {**fixed_params, **dict(study.best_params)}
     best_objective = float(study.best_value)
     tc.save_best_params(
         STRATEGY_NAME, basket, best_params, objective=best_objective, n_trials=len(study.trials),

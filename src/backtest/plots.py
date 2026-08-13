@@ -14,7 +14,7 @@ from Src.backtest import metrics as bt_metrics
 from Src.backtest.types import BacktestResult
 
 if TYPE_CHECKING:
-    from src.backtest.config import BasketParams
+    from Src.backtest.config import BasketParams
 
 
 def plot_equity_and_drawdown(

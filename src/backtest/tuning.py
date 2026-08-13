@@ -38,10 +38,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.backtest.config import BacktestConfig, BasketParams, DateRange
-from src.backtest.engine import BacktestEngine
-from src.backtest.strategy import build_strategy
-from src.config import CANDLES_PER_DAY, TUNING_DIR
+from Src.backtest.config import BacktestConfig, BasketParams, DateRange
+from Src.backtest.engine import BacktestEngine
+from Src.backtest.strategy import build_strategy
+from Src.config import CANDLES_PER_DAY, TUNING_DIR
 
 
 def generate_walkforward_folds(

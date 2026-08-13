@@ -298,7 +298,15 @@ def run_garch_backtest(
         # Toleranzgrenzen sind auf Xmax der Clique geschaetzt, nicht pro Paar).
         exit_mid = (tolerance_df["lower_limit"] + tolerance_df["upper_limit"]) / 2.0
 
-        day_slice = window_prices.index[window_prices.index >= day_start]
+        # Gegen tolerance_df.index schneiden, NICHT gegen window_prices.index:
+        # build_pairwise_return_spreads -> compute_log_returns dropna't Zeilen,
+        # an denen irgendein Clique-Mitglied NaN ist (z.B. ein neu gelistetes
+        # Asset mit Datenluecke) -- tolerance_df hat denselben (kuerzeren)
+        # Index wie spread_df/adjusted_df. Ohne diesen Schnitt wirft
+        # tolerance_df.loc[day_slice] weiter unten einen KeyError, sobald
+        # der Discovery-Tag von so einer Datenluecke betroffen ist.
+        day_slice_full = window_prices.index[window_prices.index >= day_start]
+        day_slice = day_slice_full.intersection(tolerance_df.index)
         exit_deadline = day_slice[-1] if len(day_slice) else window_prices.index[-1]
 
         if trade_mode == "max_only":
@@ -419,6 +427,71 @@ def plot_xmax_with_garch_bands(
         # zu einem nativen Crash (0xC0000409), isoliert per Debug-Bisektion.
         # plt.setp(...rotation=...) erreicht dieselbe schraege Tick-Beschriftung
         # ohne den betroffenen Layout-Engine-Codepfad.
+        plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+        if show:
+            plt.show()
+            plt.close(fig)
+    return ax
+
+
+def plot_price_spread(
+    price_spread: pd.Series,
+    trades_df: pd.DataFrame,
+    *,
+    ax=None,
+    show: bool = True,
+):
+    """Plottet den Preis-Level-Spread EINES Paares mit Entry-/Exit-Markern
+    -- Pendant zu bollinger_pairtrading_engine.plot_spread_with_bollinger_bands
+    / pairtrading_engine.plot_price_spread_with_exit, hier fuer die GARCH-
+    Toleranzintervall-Strategie.
+
+    OHNE Referenzlinie fuer den Exit: anders als bei EWMA/Bollinger ist der
+    GARCH-Exit NICHT auf dem Preis-Level-Spread definiert, sondern auf |Xt|
+    (dem GARCH-normierten Return-Spread) gegen die Mitte der Wilks-
+    Toleranzgrenzen (siehe simulate_garch_trade/Modul-Docstring "Exit-
+    Mitte") -- eine Referenzlinie auf DIESEM Preis-Spread-Plot waere
+    irrefuehrend, da sie nicht die tatsaechliche Exit-Bedingung abbildet
+    (siehe plot_xmax_with_garch_bands fuer den Plot MIT Exit-Mitte, dort
+    aber auf |Xmax| statt dem Preis-Spread).
+
+    Args:
+        price_spread: EINE Spalte aus build_pairwise_price_spreads's
+            spread_df (Preis-Level-Spread des geplotteten Paares) --
+            NICHT der GARCH-normierte Return-Spread, der fuer Entry/Exit
+            tatsaechlich verwendet wird.
+        trades_df: wie von run_garch_backtest zurueckgegeben, EINGESCHRAENKT
+            auf das hier geplottete Paar/den Zeitraum.
+    """
+    import matplotlib.pyplot as plt
+
+    owns_figure = ax is None
+    if owns_figure:
+        fig, ax = plt.subplots(figsize=(11, 5))
+    else:
+        fig = ax.figure
+
+    idx = price_spread.index
+    ax.plot(idx, price_spread, color="#2a2a28", linewidth=1.1, label="Preis-Spread")
+
+    if not trades_df.empty:
+        for _, row in trades_df.iterrows():
+            if row["entry_time"] in idx:
+                ax.axvline(row["entry_time"], color="firebrick", linewidth=1, alpha=0.7)
+                ax.scatter([row["entry_time"]], [price_spread.loc[row["entry_time"]]], color="firebrick", zorder=5, s=40)
+            if row["exit_time"] in idx:
+                ax.axvline(row["exit_time"], color="seagreen", linewidth=1, alpha=0.7)
+                ax.scatter([row["exit_time"]], [price_spread.loc[row["exit_time"]]], color="seagreen", zorder=5, s=40, marker="s")
+
+    ax.set_title("Preis-Spread (GARCH) -- Exit-Kriterium wirkt auf |Xt|, nicht auf diesen Spread")
+    ax.set_xlabel("Zeit")
+    ax.set_ylabel("Spread (Log-Preis-Differenz)")
+    ax.legend(frameon=False, fontsize=8)
+    ax.grid(True, alpha=0.25)
+
+    if owns_figure:
+        # siehe plot_xmax_with_garch_bands: fig.tight_layout() nach GARCH-
+        # Fits (scipy.optimize) crasht nativ auf diesem Windows/conda-Setup.
         plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
         if show:
             plt.show()

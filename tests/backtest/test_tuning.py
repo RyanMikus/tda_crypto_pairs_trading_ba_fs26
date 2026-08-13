@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.backtest.config import BasketParams, DateRange
-from src.backtest.tuning import (
+from Src.backtest.config import BasketParams, DateRange
+from Src.backtest.tuning import (
     TuningResult, build_basket_overrides, generate_walkforward_folds, tune_all_baskets, tune_basket_params,
 )
 
@@ -118,7 +118,7 @@ class TestTuneAllBasketsAndOverrides:
             calls.append((basket, seed))
             return TuningResult(basket=basket, study=_FakeStudy(), trials_df=pd.DataFrame(), best_params={}, folds=[])
 
-        monkeypatch.setattr("src.backtest.tuning.tune_basket_params", _fake_tune_basket_params)
+        monkeypatch.setattr("Src.backtest.tuning.tune_basket_params", _fake_tune_basket_params)
 
         idx = synthetic_panel["close"].index
         calibration_range = DateRange(idx[0], idx[0] + pd.Timedelta(days=4))

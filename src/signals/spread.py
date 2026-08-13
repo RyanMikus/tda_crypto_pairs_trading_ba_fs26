@@ -42,12 +42,25 @@ def estimate_hedge_ratio(price_df: pd.DataFrame, ticker_1: str, ticker_2: str) -
     log(P1) = alpha + beta * log(P2) + eps
     beta ist die Hedge-Ratio, mit der ticker_2 gewichtet wird, um den
     stationärsten Preis-Spread gegen ticker_1 zu bilden.
+
+    Zeilen, an denen ticker_1 oder ticker_2 NaN ist (z.B. weil ein Asset im
+    price_df-Fenster noch nicht gelistet war), werden vor der Regression
+    entfernt -- sonst bricht OLS mit "exog contains inf or nans" ab, sobald
+    ein Clique-Mitglied eine Datenlücke hat (siehe TestHedgeRatioAndSpread).
     """
     log_p1 = np.log(price_df[ticker_1]).to_numpy()
     log_p2 = np.log(price_df[ticker_2]).to_numpy()
 
-    x = add_constant(log_p2)
-    model = OLS(log_p1, x).fit()
+    valid = np.isfinite(log_p1) & np.isfinite(log_p2)
+    n_valid = int(valid.sum())
+    if n_valid < 3:
+        raise ValueError(
+            f"estimate_hedge_ratio({ticker_1!r}, {ticker_2!r}): nur {n_valid} gültige "
+            f"(nicht-NaN) Beobachtungen im übergebenen Fenster -- mindestens 3 nötig."
+        )
+
+    x = add_constant(log_p2[valid])
+    model = OLS(log_p1[valid], x).fit()
     return float(model.params[1])
 
 

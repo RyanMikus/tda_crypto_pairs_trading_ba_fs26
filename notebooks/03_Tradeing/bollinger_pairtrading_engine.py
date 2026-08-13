@@ -560,3 +560,13 @@ def screen_bollinger_signal_quality(
         })
 
     return pd.DataFrame(rows)
+
+
+# === BEST_PARAMS (auto-generiert von tuning_common.write_best_params_to_engine_module) ===
+# Von quick_tune_*.py gefundene, je Basket beste Parameter (Walk-Forward-
+# Validierungs-Objective) -- NUR zur Referenz, wird von den run_*_backtest-
+# Funktionen NICHT automatisch gelesen. Quelle: C:\Users\ilija\Documents\OST\Semester_6\Bachlor\bachelorarbeit\data\processed\tuning\best_params_bollinger.json
+BEST_PARAMS = {
+    'Basket 1': {'max_holding_hours': 12.000000000000002, 'trade_mode': 'max_only', 'lookback_candles': 21, 'n_std': 2.9548647782429915, 'exit_lookback_candles': 350, 'max_concurrent_positions': 5, 'hedge_lookback_candles': 82, 'objective': -0.07358964991071153, 'n_trials': 20},
+}
+# === ENDE BEST_PARAMS ===

@@ -307,7 +307,15 @@ def run_pairtrading_backtest(
         )
         exit_mean_df = compute_exit_mean(price_spread_df, exit_lookback_candles=exit_lookback_candles)
 
-        day_slice = window_prices.index[window_prices.index >= day_start]
+        # Gegen tolerance_df.index schneiden, NICHT gegen window_prices.index:
+        # build_pairwise_return_spreads -> compute_log_returns dropna't Zeilen,
+        # an denen irgendein Clique-Mitglied NaN ist (z.B. ein neu gelistetes
+        # Asset mit Datenluecke) -- tolerance_df hat denselben (kuerzeren)
+        # Index wie spread_df/adjusted_df. Ohne diesen Schnitt wirft
+        # tolerance_df.loc[day_slice] weiter unten einen KeyError, sobald
+        # der Discovery-Tag von so einer Datenluecke betroffen ist.
+        day_slice_full = window_prices.index[window_prices.index >= day_start]
+        day_slice = day_slice_full.intersection(tolerance_df.index)
         exit_deadline = day_slice[-1] if len(day_slice) else window_prices.index[-1]
 
         #!############################
@@ -479,6 +487,67 @@ def plot_xmax_with_tolerance_bands(
     ax.set_xlabel("Zeit")
     ax.set_ylabel("Xmax (vola-adjustierter Spread)")
     ax.legend(frameon=False, fontsize=7, ncol=2)
+    ax.grid(True, alpha=0.25)
+
+    if owns_figure:
+        fig.autofmt_xdate()
+        fig.tight_layout()
+        if show:
+            plt.show()
+            plt.close(fig)
+    return ax
+
+
+def plot_price_spread_with_exit(
+    price_spread: pd.Series,
+    exit_mean: pd.Series,
+    trades_df: pd.DataFrame,
+    *,
+    ax=None,
+    show: bool = True,
+):
+    """Plottet den Preis-Level-Spread EINES Paares mit dem rollierenden
+    Exit-Mittelwert (siehe src.signals.bollinger.compute_exit_mean/
+    simulate_pair_trade -- der Trade schliesst, sobald der Preis-Spread
+    diese Linie erreicht/kreuzt) sowie Entry-/Exit-Markern -- Pendant zu
+    bollinger_pairtrading_engine.plot_spread_with_bollinger_bands, hier fuer
+    die EWMA-Toleranzintervall-Strategie (deren Entry auf der vola-
+    normierten Renditedifferenz beruht, siehe plot_xmax_with_tolerance_bands,
+    aber deren EXIT auf dem Preis-Level-Spread).
+
+    Args:
+        price_spread: EINE Spalte aus build_pairwise_price_spreads's
+            spread_df (Preis-Level-Spread des geplotteten Paares).
+        exit_mean: dieselbe Spalte aus compute_exit_mean's Rueckgabe
+            (gleicher Index wie price_spread).
+        trades_df: wie von run_pairtrading_backtest zurueckgegeben,
+            EINGESCHRAENKT auf das hier geplottete Paar/den Zeitraum.
+    """
+    import matplotlib.pyplot as plt
+
+    owns_figure = ax is None
+    if owns_figure:
+        fig, ax = plt.subplots(figsize=(11, 5))
+    else:
+        fig = ax.figure
+
+    idx = price_spread.index
+    ax.plot(idx, price_spread, color="#2a2a28", linewidth=1.1, label="Preis-Spread")
+    ax.plot(idx, exit_mean.reindex(idx), color="#898781", linewidth=1, linestyle="--", label="Exit-Mittelwert")
+
+    if not trades_df.empty:
+        for _, row in trades_df.iterrows():
+            if row["entry_time"] in idx:
+                ax.axvline(row["entry_time"], color="firebrick", linewidth=1, alpha=0.7)
+                ax.scatter([row["entry_time"]], [price_spread.loc[row["entry_time"]]], color="firebrick", zorder=5, s=40)
+            if row["exit_time"] in idx:
+                ax.axvline(row["exit_time"], color="seagreen", linewidth=1, alpha=0.7)
+                ax.scatter([row["exit_time"]], [price_spread.loc[row["exit_time"]]], color="seagreen", zorder=5, s=40, marker="s")
+
+    ax.set_title("Preis-Spread mit Exit-Mittelwert (EWMA)")
+    ax.set_xlabel("Zeit")
+    ax.set_ylabel("Spread (Log-Preis-Differenz)")
+    ax.legend(frameon=False, fontsize=8)
     ax.grid(True, alpha=0.25)
 
     if owns_figure:
@@ -1021,3 +1090,14 @@ def assert_no_test_period_leakage(windows: list[dict], test_start, test_end) -> 
         assert not (w["val_start"] < test_end_ts and test_start_ts < w["val_end"]), (
             f"Walk-Forward-Validierungsfenster {w} ueberlappt den finalen Testzeitraum."
         )
+
+
+# === BEST_PARAMS (auto-generiert von tuning_common.write_best_params_to_engine_module) ===
+# Von quick_tune_*.py gefundene, je Basket beste Parameter (Walk-Forward-
+# Validierungs-Objective) -- NUR zur Referenz, wird von den run_*_backtest-
+# Funktionen NICHT automatisch gelesen. Quelle: C:\Users\ilija\Documents\OST\Semester_6\Bachlor\bachelorarbeit\data\processed\tuning\best_params_ewma.json
+BEST_PARAMS = {
+    'Basket 1': {'lookback_candles': 140, 'p_content': 0.9624220374118447, 'recalib_every': 21, 'ewma_decay': 0.8891930788419412, 'exit_lookback_candles': 55, 'objective': -0.038394350809653956, 'n_trials': 25},
+    'Basket 2': {'max_holding_hours': 11.999999999999998, 'max_concurrent_positions': 10, 'trade_mode': 'max_only', 'lookback_candles': 137, 'p_content': 0.9661941603960407, 'recalib_every': 15, 'ewma_decay': 0.9107118400181603, 'exit_lookback_candles': 69, 'objective': -0.029763865960146536, 'n_trials': 30},
+}
+# === ENDE BEST_PARAMS ===

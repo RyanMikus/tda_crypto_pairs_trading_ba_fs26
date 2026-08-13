@@ -28,8 +28,15 @@ zu veraendern.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +54,84 @@ FIXED_CONFIDENCE = 0.95  # Wilks-Toleranzintervall-Konfidenz, siehe tolerance.wi
 # idempotent (kein Anhaengen von Duplikaten bei jedem Tuning-Lauf).
 _BEST_PARAMS_BEGIN = "# === BEST_PARAMS (auto-generiert von tuning_common.write_best_params_to_engine_module) ==="
 _BEST_PARAMS_END = "# === ENDE BEST_PARAMS ==="
+
+
+def suggest_param(
+    trial: "optuna.Trial",
+    name: str,
+    *,
+    kind: str,
+    default_range,
+    fixed_params: dict,
+    search_ranges: dict,
+):
+    """Einheitliche Optuna-suggest_*-Umleitung fuer alle drei Quick-Tuner:
+    entscheidet pro Parameter zwischen fix, gesuchter Custom-Range oder
+    gesuchter Default-Range -- ersetzt die vorher in jedem Tuner separat
+    wiederholten `fixed_params.get(name, trial.suggest_*(name, lo, hi))`-
+    Zeilen und macht Suchbereiche von aussen (search_ranges) ueberschreibbar,
+    ohne die Tuner-Objective-Funktionen selbst anzufassen.
+
+    Prioritaet: fixed_params (Parameter wird NICHT gesucht) > search_ranges
+    (Parameter wird gesucht, aber mit eigenem Bereich statt Default) >
+    default_range (Parameter wird mit dem im Tuner hart codierten
+    Standardbereich gesucht).
+
+    Args:
+        trial: aktueller Optuna-Trial.
+        name: Parametername (Schluessel in fixed_params/search_ranges).
+        kind: "int", "float" oder "categorical".
+        default_range: (lo, hi) fuer int/float, Liste der Optionen fuer
+            categorical -- wird verwendet, falls weder fixed_params noch
+            search_ranges einen Eintrag fuer name haben.
+        fixed_params: siehe *_pairtrading_engine-Tuner-Docstrings.
+        search_ranges: dict {param_name: (lo, hi)} bzw. {param_name: [options]}
+            fuer categorical -- ueberschreibt NUR den Suchbereich, der
+            Parameter bleibt gesucht (im Gegensatz zu fixed_params).
+
+    Returns:
+        Der vorgeschlagene (oder fixierte) Wert.
+    """
+    if name in fixed_params:
+        return fixed_params[name]
+
+    lo_hi_or_options = search_ranges.get(name, default_range)
+    if kind == "int":
+        lo, hi = lo_hi_or_options
+        return trial.suggest_int(name, int(lo), int(hi))
+    if kind == "float":
+        lo, hi = lo_hi_or_options
+        return trial.suggest_float(name, float(lo), float(hi))
+    if kind == "categorical":
+        return trial.suggest_categorical(name, list(lo_hi_or_options))
+    raise ValueError(f"Unbekannte kind={kind!r}, erwartet 'int'/'float'/'categorical'.")
+
+
+def search_space_signature(fixed_params: dict, search_ranges: dict) -> str:
+    """Stabiler kurzer Hash ueber (fixed_params, search_ranges) -- 8 Hex-
+    Zeichen aus SHA-256 ueber die kanonische (sortierte) JSON-Repraesentation.
+
+    Grund: Optuna speichert die Parameter-VERTEILUNG (Typ + Bereich/Choices)
+    beim ERSTEN Trial fest in der Study. Wird derselbe Parametername in
+    einem spaeteren Trial mit einem anderen Bereich/anderen Choices gesucht
+    (z.B. weil im Notebook zwischen zwei Laeufen der Suchbereich verstellt
+    oder ein Parameter von "tunen" auf "fix" umgeschaltet wurde), lehnt
+    Optuna das mit "CategoricalDistribution does not support dynamic value
+    space" (analog fuer Int-/FloatDistribution) hart ab.
+
+    Wird als Suffix an den Study-Namen gehaengt (siehe die drei
+    tune_*_strategy-Funktionen): identischer Suchraum -> identische
+    Signatur -> dieselbe Study wird weiterverwendet (Trials sammeln sich
+    an). Veraenderter Suchraum -> andere Signatur -> automatisch eine neue,
+    saubere Study -- kein manuelles Loeschen von .db-Dateien noetig, keine
+    verlorenen Trials aus frueheren Laeufen mit anderem Suchraum (die
+    bleiben einfach unter ihrer eigenen Signatur erhalten).
+    """
+    payload = json.dumps(
+        {"fixed_params": fixed_params, "search_ranges": search_ranges},
+        sort_keys=True, default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
 
 def resolve_fee_bps(fee_preset: str | float = "standard") -> float:
@@ -172,6 +257,92 @@ def create_or_load_study(
 
 
 # ============================================================================
+# Optuna-Dashboard: automatischer Hintergrundstart + Browser-Oeffnen
+# ============================================================================
+
+_DASHBOARD_PROCESSES: dict[int, subprocess.Popen] = {}
+DASHBOARD_PORTS = {"ewma": 8080, "bollinger": 8081, "garch": 8082}
+
+
+def _port_is_open(host: str, port: int, *, timeout: float = 0.3) -> bool:
+    """True, falls unter host:port bereits etwas auf Verbindungen lauscht
+    (egal ob unser eigenes Dashboard oder ein fremder Prozess)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        return sock.connect_ex((host, port)) == 0
+
+
+def ensure_dashboard_running(
+    storage_path: Path | str, *, port: int, host: str = "localhost",
+    open_browser: bool = True, startup_timeout_seconds: float = 8.0,
+) -> str:
+    """Startet optuna-dashboard fuer storage_path als Hintergrundprozess,
+    falls unter host:port noch nichts laeuft, und oeffnet den Browser-Tab.
+
+    Gedacht, um vor jedem Quick-Tune-Lauf aufgerufen zu werden (siehe
+    quick_tuning.ipynb-Button-Callbacks) -- idempotent: ein bereits
+    laufendes Dashboard (egal ob von uns oder manuell gestartet) wird nicht
+    doppelt gestartet, der Browser-Tab wird trotzdem geoeffnet, damit der
+    Nutzer bei jedem Klick wieder direkt zum Dashboard gelangt.
+
+    Der Hintergrundprozess ist ein eigener `optuna-dashboard`-Subprozess
+    (nicht optuna_dashboard.run_server() direkt, das blockiert den
+    aufrufenden Thread) -- ueberlebt dadurch auch einen Kernel-Neustart,
+    muss also bei Bedarf manuell beendet werden (Task-Manager/`kill`).
+
+    Args:
+        storage_path: Pfad zur SQLite-Study-Datei (z.B. DEFAULT_STORAGE_PATH
+            eines der drei quick_tune_*-Module).
+        port: Port fuer diese Study -- siehe DASHBOARD_PORTS (ein eigener
+            Port je Strategie, damit alle drei gleichzeitig laufen koennen).
+        host: Bind-Adresse, Default "localhost".
+        open_browser: True (Default) = Browser-Tab automatisch oeffnen.
+        startup_timeout_seconds: maximale Wartezeit, bis der neu gestartete
+            Server tatsaechlich Verbindungen annimmt (per Port-Polling alle
+            0.3s geprueft, ~2s Kaltstart sind ueblich) -- nur relevant, wenn
+            tatsaechlich neu gestartet wurde.
+
+    Returns:
+        Die URL des Dashboards (http://host:port/).
+    """
+    url = f"http://{host}:{port}/"
+
+    if not _port_is_open(host, port):
+        if shutil.which("optuna-dashboard") is None:
+            print(
+                f"WARNUNG: optuna-dashboard-Kommando nicht gefunden (pip install optuna-dashboard) "
+                f"-- Dashboard wird nicht gestartet, Tuning laeuft trotzdem normal weiter."
+            )
+            return url
+
+        path = Path(storage_path)
+        storage_url = f"sqlite:///{path.resolve()}"
+        proc = subprocess.Popen(
+            ["optuna-dashboard", storage_url, "--host", host, "--port", str(port), "--server", "wsgiref"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        _DASHBOARD_PROCESSES[port] = proc
+        print(f"optuna-dashboard wird gestartet: {url} (Storage: {storage_url}, PID {proc.pid}) ...")
+
+        deadline = time.monotonic() + startup_timeout_seconds
+        while time.monotonic() < deadline:
+            if _port_is_open(host, port):
+                print(f"optuna-dashboard bereit: {url}")
+                break
+            time.sleep(0.3)
+        else:
+            print(f"WARNUNG: optuna-dashboard antwortet nach {startup_timeout_seconds:.0f}s noch nicht "
+                  f"unter {url} -- Browser wird trotzdem geoeffnet, ggf. manuell neu laden.")
+    else:
+        print(f"optuna-dashboard laeuft bereits unter {url}")
+
+    if open_browser:
+        webbrowser.open(url)
+
+    return url
+
+
+# ============================================================================
 # Beste Parameter: Datei-Persistenz
 # ============================================================================
 
@@ -282,22 +453,34 @@ def write_best_params_to_engine_module(strategy: str, module_path: Path | str) -
 # ============================================================================
 
 def split_walkforward_test(
-    start, end, *, test_fraction: float = 0.2,
+    start, end, *, test_fraction: float = 0.2, embargo_days: int = 1,
 ) -> tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]:
     """Teilt [start, end) in (train_val_start, train_val_end, test_start,
     test_end): die letzten test_fraction des Gesamtzeitraums bilden den
     finalen, waehrend des Tunings nie beruehrten Testzeitraum.
+
+    embargo_days trennt train_val_end von test_start um einen kleinen
+    Puffer (Default 1 Tag): auto_walkforward_layout/generate_walkforward_
+    windows koennen ein Walk-Forward-Fenster erzeugen, dessen val_end EXAKT
+    auf train_val_end faellt -- ohne Puffer wuerde assert_no_test_period_leakage
+    das dann als Leakage werten (val_end >= test_start, Grenze inklusive),
+    obwohl train_val_end nur die Suchraum-Obergrenze ist. Der Puffer
+    verkleinert den Walk-Forward-Suchraum minimal, verhindert aber diesen
+    Grenzfall zuverlaessig.
 
     Returns:
         (train_val_start, train_val_end, test_start, test_end)
     """
     if not 0.0 < test_fraction < 1.0:
         raise ValueError(f"test_fraction muss in (0, 1) liegen, erhalten: {test_fraction}")
+    if embargo_days < 0:
+        raise ValueError(f"embargo_days darf nicht negativ sein, erhalten: {embargo_days}")
 
     start_ts = pd.Timestamp(start)
     end_ts = pd.Timestamp(end)
     total_days = (end_ts - start_ts).days
     test_days = max(1, int(round(total_days * test_fraction)))
     test_start = end_ts - pd.Timedelta(days=test_days)
+    train_val_end = test_start - pd.Timedelta(days=embargo_days)
 
-    return start_ts, test_start, test_start, end_ts
+    return start_ts, train_val_end, test_start, end_ts

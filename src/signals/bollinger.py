@@ -56,6 +56,11 @@ def build_pairwise_price_spreads(
         (spread_df, hedge_ratios): spread_df wie build_pairwise_return_spreads
         (timestamp x pair, pair als Tuple (asset_id_i, asset_id_j) mit i < j),
         hedge_ratios ist ein dict {pair: hedge_ratio} fuer Diagnose/Reuse.
+        Paare, fuer die im hedge_window zu wenig gueltige (nicht-NaN)
+        Beobachtungen vorliegen (z.B. ein Clique-Mitglied war zu diesem
+        Zeitpunkt noch nicht gelistet), werden STILLSCHWEIGEND uebersprungen
+        -- tauchen also weder in spread_df noch in hedge_ratios auf, statt
+        den gesamten Aufruf abzubrechen (siehe estimate_hedge_ratio).
     """
     asset_ids = list(price_df.columns)
     hedge_window = price_df.iloc[-hedge_lookback_candles:] if hedge_lookback_candles else price_df
@@ -64,7 +69,10 @@ def build_pairwise_price_spreads(
     hedge_ratios = {}
     for idx, a_i in enumerate(asset_ids):
         for a_j in asset_ids[idx + 1:]:
-            hedge_ratio = estimate_hedge_ratio(hedge_window, a_i, a_j)
+            try:
+                hedge_ratio = estimate_hedge_ratio(hedge_window, a_i, a_j)
+            except ValueError:
+                continue
             spreads[(a_i, a_j)] = compute_price_spread(price_df, a_i, a_j, hedge_ratio)
             hedge_ratios[(a_i, a_j)] = hedge_ratio
 
