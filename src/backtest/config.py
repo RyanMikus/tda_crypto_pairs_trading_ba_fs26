@@ -67,7 +67,14 @@ class BasketParams:
 
     # --- Break-Conditions (siehe exit_rules.py) ---
     stop_z: float | None = 4.0
-    max_holding_candles: int = 288 * 3
+    # Zeitlicher Exit skaliert PRO POSITION mit der bei Entry geschätzten
+    # Half-Life (position.spread.diagnostics["half_life_periods"]) statt einer
+    # festen Kerzenzahl -- Daumenregel nach Chan: Haltedauer als Vielfaches der
+    # Half-Life, sonst brechen v.a. Paare mit langsamer Reversion regelmässig
+    # am Timeout ab, bevor sie konvergieren (siehe Notebook-Test mit fixem
+    # 10h-Timeout: 37% Zwangsschliessungen vor Reversion). Fehlt half_life_periods
+    # (z.B. isoliert konstruierte Positionen in Tests), greift TimeoutRule nie.
+    max_holding_half_life_multiplier: float = 4.0
     exit_on_clique_break: bool = True  # Mitgliedschaftswechsel beim nächsten Snapshot
     max_data_gap_candles: int = 6
     # Topologischer Struktur-Break-Detektor (Single-Linkage/fcluster bei ε*-δ, siehe

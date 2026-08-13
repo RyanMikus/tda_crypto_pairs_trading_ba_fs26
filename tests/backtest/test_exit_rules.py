@@ -100,15 +100,27 @@ class TestStopLossRule:
 
 
 class TestTimeoutRule:
-    def test_triggers_at_threshold(self, make_position, make_bar_context):
-        params = BasketParams(max_holding_candles=10)
-        position = make_position(params=params, bars_held=10)
+    def test_triggers_at_threshold(self, make_position, make_bar_context, make_spread_definition):
+        # max_holding = multiplier * half_life = 2.0 * 5.0 = 10
+        params = BasketParams(max_holding_half_life_multiplier=2.0)
+        spread = make_spread_definition(diagnostics={"half_life_periods": 5.0})
+        position = make_position(params=params, spread=spread, bars_held=10)
         ctx = make_bar_context(params=params)
         assert TimeoutRule().check(position, ctx).reason == "timeout"
 
-    def test_does_not_trigger_below_threshold(self, make_position, make_bar_context):
-        params = BasketParams(max_holding_candles=10)
-        position = make_position(params=params, bars_held=9)
+    def test_does_not_trigger_below_threshold(self, make_position, make_bar_context, make_spread_definition):
+        params = BasketParams(max_holding_half_life_multiplier=2.0)
+        spread = make_spread_definition(diagnostics={"half_life_periods": 5.0})
+        position = make_position(params=params, spread=spread, bars_held=9)
+        ctx = make_bar_context(params=params)
+        assert not TimeoutRule().check(position, ctx).should_exit
+
+    def test_does_not_trigger_when_half_life_missing(self, make_position, make_bar_context):
+        """Ohne half_life_periods in der Diagnostik (z.B. isoliert konstruierte
+        Position ohne echten Strategie-Durchlauf) ist die Regel wirkungslos,
+        statt faelschlich sofort zu triggern."""
+        params = BasketParams(max_holding_half_life_multiplier=2.0)
+        position = make_position(params=params, bars_held=10_000)
         ctx = make_bar_context(params=params)
         assert not TimeoutRule().check(position, ctx).should_exit
 
@@ -194,16 +206,18 @@ class TestTopologicalBreakRule:
 
 
 class TestEvaluateExitChain:
-    def test_returns_first_matching_reason(self, make_position, make_bar_context):
-        params = BasketParams(max_data_gap_candles=3, max_holding_candles=5)
+    def test_returns_first_matching_reason(self, make_position, make_bar_context, make_spread_definition):
+        params = BasketParams(max_data_gap_candles=3, max_holding_half_life_multiplier=1.0)
+        spread = make_spread_definition(diagnostics={"half_life_periods": 5.0})
         # Sowohl DataGap als auch Timeout wuerden greifen -- DataGap steht zuerst in DEFAULT_EXIT_CHAIN
-        position = make_position(params=params, missing_price_bars=3, bars_held=5)
+        position = make_position(params=params, spread=spread, missing_price_bars=3, bars_held=5)
         ctx = make_bar_context(params=params)
         decision = evaluate_exit_chain(position, ctx, DEFAULT_EXIT_CHAIN)
         assert decision.reason == "data_gap"
 
     def test_no_exit_when_nothing_matches(self, make_position, make_bar_context, make_multi_bar_price_window):
-        params = BasketParams(max_data_gap_candles=99, max_holding_candles=99, stop_z=4.0, exit_on_clique_break=False, bollinger_window_candles=2)
+        params = BasketParams(max_data_gap_candles=99, stop_z=4.0, exit_on_clique_break=False, bollinger_window_candles=2)
+        # keine half_life_periods in der Diagnostik -> TimeoutRule wirkungslos
         position = make_position(params=params, bars_held=0, missing_price_bars=0)
         prices = _zeros_and_spike_window(make_multi_bar_price_window, n=2)  # z=1.0 < stop_z
         ctx = make_bar_context(params=params, prices=prices)

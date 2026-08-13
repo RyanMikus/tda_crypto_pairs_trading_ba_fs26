@@ -73,10 +73,19 @@ class StopLossRule:
 
 @dataclass
 class TimeoutRule:
+    """Zwangs-Exit nach max_holding_half_life_multiplier * Half-Life dieser
+    Position (siehe BasketParams.max_holding_half_life_multiplier) -- pro
+    Paar unterschiedlich, statt einer festen Kerzenzahl für alle Positionen.
+    Fehlende/unendliche half_life_periods (z.B. Testfixtures ohne
+    Diagnostik) deaktivieren die Regel für diese Position, statt fälschlich
+    sofort zu triggern."""
+
     reason: str = "timeout"
 
     def check(self, position: Position, ctx: BarContext) -> ExitDecision:
-        if position.bars_held >= ctx.params.max_holding_candles:
+        half_life = position.spread.diagnostics.get("half_life_periods", float("inf"))
+        max_holding = ctx.params.max_holding_half_life_multiplier * half_life
+        if position.bars_held >= max_holding:
             return ExitDecision(True, self.reason)
         return NO_EXIT
 

@@ -109,12 +109,13 @@ def make_spread_definition():
     """Baut eine SpreadDefinition mit frei wählbaren mu/sigma/weights --
     fürs isolierte Testen von Exit-Regeln/Strategie-Logik ohne echte OLS/
     Johansen-Schätzung."""
-    def _make(mu=0.0, sigma=1.0, weights=(1.0, -0.5), symbols=("AAAUSDT", "BBBUSDT"), asset_ids=(1, 2), kind="pairwise"):
+    def _make(mu=0.0, sigma=1.0, weights=(1.0, -0.5), symbols=("AAAUSDT", "BBBUSDT"), asset_ids=(1, 2), kind="pairwise", diagnostics=None):
         return SpreadDefinition(
             kind=kind, asset_ids=asset_ids, symbols=symbols, weights=weights,
             mu=mu, sigma=sigma,
             fitted_at=pd.Timestamp("2025-01-01", tz="UTC"),
             formation_start=pd.Timestamp("2024-12-25", tz="UTC"),
+            diagnostics=diagnostics or {},
         )
     return _make
 
