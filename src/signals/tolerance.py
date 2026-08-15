@@ -176,24 +176,47 @@ def compute_max_adjusted_spread(adjusted_df: pd.DataFrame) -> pd.DataFrame:
 # 3. Wilks nichtparametrisches Toleranzintervall
 # ============================================================================
 
-def wilks_tolerance_limits(sample: np.ndarray, *, p_content: float, confidence: float) -> tuple[float, float]:
-    """Nichtparametrisches (p, 1-alpha) zweiseitiges Toleranzintervall nach
-    Wilks (1941), wie in Lin et al. (2021) Gl. (1)-(3) verwendet.
+def _wilks_one_sided_index(n: int, *, p_content: float, confidence: float, side: str) -> int:
+    """Groesster gueltiger Rang l (unterer Fall) bzw. kleinster gueltiger Rang u
+    (oberer Fall) fuer ein einseitiges nichtparametrisches Wilks-Toleranz-
+    limit, wie in Lin et al. (2021) Gl. (2) (unten) und Gl. (3) (oben).
 
-    Fuer Ordnungsstatistiken X_(1) <= ... <= X_(n) folgt F(X_(k)) einer
-    Beta(k, n-k+1)-Verteilung. Gesucht wird das kleinste, moeglichst
-    zentrierte Intervall [X_(r), X_(s)], das
+    Ordnungsstatistik-Standardresultat: 1-F(X_(l)) ~ Beta(n-l+1, l) und
+    F(X_(u)) ~ Beta(u, n-u+1). Damit:
+        untere Grenze: P(1-F(X_(l)) >= p) = 1 - Beta.cdf(p; n-l+1, l)
+        obere Grenze:  P(F(X_(u)) >= p)   = 1 - Beta.cdf(p; u, n-u+1)
+    Beide Wahrscheinlichkeiten steigen monoton mit l bzw. fallen monoton mit
+    u -- gesucht wird deshalb das GROESSTE l und das KLEINSTE u, das die
+    Konfidenz noch erreicht (engste gueltige Grenze).
 
-        P(F(X_(s)) - F(X_(r)) >= p_content) >= confidence
+    Returns:
+        1-indizierter Rang. Faellt auf den Stichproben-Extremwert (l=1 bzw.
+        u=n) zurueck, falls keine engere Wahl die Konfidenz erreicht.
+    """
+    if side == "lower":
+        best = 1
+        for l in range(1, n + 1):
+            if 1.0 - beta_dist.cdf(p_content, n - l + 1, l) >= confidence:
+                best = l
+        return best
+    for u in range(1, n + 1):
+        if 1.0 - beta_dist.cdf(p_content, u, n - u + 1) >= confidence:
+            return u
+    return n
 
-    erfuellt. Die Bedingung wird exakt ueber die Beta(s-r, n-s+r+1)-Verteilung
-    berechnet (Standardresultat fuer Ordnungsstatistik-Differenzen):
 
-        P(...) = 1 - Beta.cdf(p_content; s-r, n-s+r+1)
+def wilks_tolerance_limits(
+    sample: np.ndarray, *, p_content: float, confidence: float,
+) -> tuple[float, float]:
+    """Nichtparametrische einseitige Wilks-Toleranzgrenzen (X_(l), X_(u)),
+    wie in Lin et al. (2021) Gl. (2)/(3) definiert und S. 3 als "lower and
+    upper trading signals" verwendet.
 
-    Iteriert wird ueber Breite w=n-1 absteigend bis zur kleinsten gueltigen
-    Loesung. Falls selbst w=n-1 nicht ausreicht, werden min/max der Stichprobe
-    zurueckgegeben (Konfidenz dann nicht garantiert -- Stichprobe zu klein).
+    Es handelt sich um ZWEI unabhaengige einseitige Toleranzlimits (nicht ein
+    gemeinsames zweiseitiges Intervall nach Gl. 1): l und u werden getrennt
+    ueber _wilks_one_sided_index bestimmt, jeweils mit demselben (p_content,
+    confidence)-Paar wie im Paper (S. 4: (p, 1-alpha) = (90%, 0.95) bzw.
+    (95%, 0.95) fuer beide Seiten gleichermassen).
 
     Args:
         sample: 1D-Array historischer Beobachtungen, NaN wird entfernt.
@@ -201,7 +224,7 @@ def wilks_tolerance_limits(sample: np.ndarray, *, p_content: float, confidence: 
         confidence: Konfidenzniveau 1-alpha (z.B. 0.95).
 
     Returns:
-        (lower_limit, upper_limit), Werte aus `sample` (X_(r), X_(s)).
+        (lower_limit, upper_limit) = (X_(l), X_(u)), Werte aus `sample`.
 
     Raises:
         ValueError: falls nach Entfernen von NaN weniger als 3 Beobachtungen
@@ -213,22 +236,11 @@ def wilks_tolerance_limits(sample: np.ndarray, *, p_content: float, confidence: 
     if n < 3:
         raise ValueError(f"wilks_tolerance_limits braucht mindestens 3 gueltige Beobachtungen, erhalten: {n}")
 
-    best_r, best_s = 1, n  # 1-indiziert, wie in der Ordnungsstatistik-Konvention
+    l = _wilks_one_sided_index(n, p_content=p_content, confidence=confidence, side="lower")
+    u = _wilks_one_sided_index(n, p_content=p_content, confidence=confidence, side="upper")
 
-    for w in range(n - 1, 0, -1):
-        r = (n - w) // 2 + 1
-        s = r + w
-        if s > n:
-            continue
-        # P(F(X_(s)) - F(X_(r)) >= p_content) = 1 - Beta_{s-r, n-s+r+1}.cdf(p_content)
-        prob_meets_content = 1.0 - beta_dist.cdf(p_content, s - r, n - s + r + 1)
-        if prob_meets_content >= confidence:
-            best_r, best_s = r, s
-        else:
-            break
-
-    lower_limit = float(clean[best_r - 1])
-    upper_limit = float(clean[best_s - 1])
+    lower_limit = float(clean[l - 1])
+    upper_limit = float(clean[u - 1])
     return lower_limit, upper_limit
 
 

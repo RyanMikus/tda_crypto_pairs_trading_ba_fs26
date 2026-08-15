@@ -51,7 +51,7 @@ def estimate_hedge_ratio(price_df: pd.DataFrame, ticker_1: str, ticker_2: str) -
     log_p1 = np.log(price_df[ticker_1]).to_numpy()
     log_p2 = np.log(price_df[ticker_2]).to_numpy()
 
-    valid = np.isfinite(log_p1) & np.isfinite(log_p2)
+    valid = np.isfinite(log_p1) & np.isfinite(log_p2)#gibt zurück, ob die Werte in log_p1 und log_p2 endlich sind (nicht NaN oder unendlich)
     n_valid = int(valid.sum())
     if n_valid < 3:
         raise ValueError(

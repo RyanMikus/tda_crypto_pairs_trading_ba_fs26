@@ -4,8 +4,12 @@ import pytest
 
 from Src.backtest.config import BasketParams, DateRange
 from Src.backtest.tuning import (
-    TuningResult, build_basket_overrides, generate_walkforward_folds, tune_all_baskets, tune_basket_params,
+    TuningResult, build_basket_overrides, generate_walkforward_folds,
+    tune_all_baskets, tune_basket_params,
 )
+from Src.backtest.tuning import _is_range_spec, _suggest_param, save_tuning_results  #!#################### NEU
+from Src.backtest.tuning import DASHBOARD_PORTS, _port_is_open, ensure_dashboard_running  #!#################### NEU
+from Src.backtest.tuning import fold_days_for_n_windows  #!#################### NEU
 
 
 class TestGenerateWalkforwardFolds:
@@ -32,6 +36,38 @@ class TestGenerateWalkforwardFolds:
         cal = DateRange(pd.Timestamp("2025-01-01", tz="UTC"), pd.Timestamp("2025-01-31", tz="UTC"))
         with pytest.raises(ValueError):
             generate_walkforward_folds(cal, fold_days=10, warmup_days=-1)
+
+
+#!#################### NEU
+class TestFoldDaysForNWindows:
+    """fold_days_for_n_windows -- Ruecktransformation von n_windows (wie im
+    alten auto_walkforward_layout) auf das von generate_walkforward_folds/
+    tune_basket_params erwartete fold_days."""
+
+    def _params(self):
+        return BasketParams(formation_window_candles=288 * 7, bollinger_window_candles=288)
+
+    def test_roundtrips_to_requested_window_count(self):
+        cal = DateRange(pd.Timestamp("2024-07-23", tz="UTC"), pd.Timestamp("2026-02-26", tz="UTC"))
+        params = self._params()
+        for n_windows in (3, 6, 10, 20):
+            fold_days = fold_days_for_n_windows(cal, n_windows=n_windows, base_params=params, strategy_name="pairwise_zscore")
+            import math
+            from Src.config import candles_per_day
+            warmup_days = math.ceil(params.formation_window_candles / candles_per_day(5))
+            folds = generate_walkforward_folds(cal, fold_days=fold_days, warmup_days=warmup_days)
+            assert len(folds) == n_windows
+
+    def test_raises_when_range_too_short_for_n_windows(self):
+        cal = DateRange(pd.Timestamp("2024-07-23", tz="UTC"), pd.Timestamp("2024-07-25", tz="UTC"))
+        with pytest.raises(ValueError, match="reicht nicht"):
+            fold_days_for_n_windows(cal, n_windows=1, base_params=self._params(), strategy_name="pairwise_zscore")
+
+    def test_raises_on_n_windows_below_one(self):
+        cal = DateRange(pd.Timestamp("2024-07-23", tz="UTC"), pd.Timestamp("2026-02-26", tz="UTC"))
+        with pytest.raises(ValueError, match="n_windows muss >= 1"):
+            fold_days_for_n_windows(cal, n_windows=0, base_params=self._params(), strategy_name="pairwise_zscore")
+#!####################
 
 
 def _tiny_params():
@@ -88,6 +124,102 @@ class TestTuneBasketParamsSmoke:
             )
 
 
+#!#################### NEU
+class TestGenericSearchSpace:
+    """search_space (statt der frueher fest verdrahteten entry_z/exit_z/
+    max_holding_half_life_multiplier) -- Src/backtest/strategy.py:
+    GarchWilksToleranceStrategy braucht z.B. wilks_p_content/
+    wilks_confidence statt entry_z/exit_z, siehe Modul-Docstring."""
+
+    def test_is_range_spec_tuple_vs_list(self):
+        # tuple -> IMMER Bereich, auch wenn die Werte wie eine 2er-Auswahl aussehen
+        assert _is_range_spec((1.0, 4.0))
+        assert _is_range_spec((0.90, 0.95))
+        assert _is_range_spec((1, 8))
+        # list -> IMMER kategorial, auch bei rein numerischem Inhalt
+        assert not _is_range_spec([0.90, 0.95])
+        assert not _is_range_spec(["bps", "high_low"])
+
+    def test_is_range_spec_rejects_wrong_length_tuple(self):
+        with pytest.raises(ValueError, match="genau 2 Werte"):
+            _is_range_spec((1.0, 2.0, 3.0))
+
+    def test_suggest_param_int_range_uses_suggest_int(self):
+        calls = []
+
+        class _FakeTrial:
+            def suggest_int(self, name, low, high):
+                calls.append(("int", name, low, high))
+                return low
+
+            def suggest_float(self, name, low, high):
+                calls.append(("float", name, low, high))
+                return low
+
+            def suggest_categorical(self, name, choices):
+                calls.append(("categorical", name, choices))
+                return choices[0]
+
+        trial = _FakeTrial()
+        value = _suggest_param(trial, "wilks_lookback_candles", (60, 300), resolved={})
+        assert value == 60
+        assert calls == [("int", "wilks_lookback_candles", 60, 300)]
+
+    def test_suggest_param_categorical_list_uses_suggest_categorical(self):
+        class _FakeTrial:
+            def suggest_categorical(self, name, choices):
+                return choices[-1]
+
+        trial = _FakeTrial()
+        value = _suggest_param(trial, "wilks_p_content", [0.90, 0.95], resolved={})
+        assert value == 0.95
+
+    def test_suggest_param_exit_z_capped_by_entry_z(self):
+        """Regressionstest fuer die urspruengliche exit_z<entry_z-Kopplung --
+        muss beim generischen Umbau erhalten bleiben, WENN beide im
+        Suchraum stehen (siehe _suggest_param-Docstring)."""
+        captured = {}
+
+        class _FakeTrial:
+            def suggest_float(self, name, low, high):
+                captured[name] = (low, high)
+                return high
+
+        trial = _FakeTrial()
+        _suggest_param(trial, "exit_z", (0.0, 4.0), resolved={"entry_z": 2.0})
+        assert captured["exit_z"] == (0.0, 1.9)  # min(4.0, entry_z-0.1)
+
+    def test_runs_end_to_end_with_custom_search_space(self, synthetic_panel, timeline):
+        """Ein Suchraum ausserhalb der drei Default-Parameter (hier:
+        stop_z/max_concurrent_positions als Platzhalter fuer z.B.
+        wilks_p_content/wilks_confidence bei garch_wilks) muss genauso
+        durchlaufen wie der Default -- reiner Plumbing-Check."""
+        idx = synthetic_panel["close"].index
+        calibration_range = DateRange(idx[0], idx[0] + pd.Timedelta(days=4))
+
+        result = tune_basket_params(
+            basket="Basket 1", panel=synthetic_panel, timeline=timeline, base_params=_tiny_params(),
+            calibration_range=calibration_range, fold_days=1, n_trials=2, use_persistent_storage=False,
+            min_trades_per_fold=0.0,
+            search_space={"stop_z": (2.0, 5.0), "max_concurrent_positions": (1, 3)},
+        )
+
+        assert set(result.best_params) == {"stop_z", "max_concurrent_positions"}
+        assert set(result.trials_df.columns) >= {"stop_z", "max_concurrent_positions"}
+
+    def test_unknown_search_space_field_raises(self, synthetic_panel, timeline):
+        idx = synthetic_panel["close"].index
+        calibration_range = DateRange(idx[0], idx[0] + pd.Timedelta(days=4))
+
+        with pytest.raises(ValueError, match="keine BasketParams-Felder"):
+            tune_basket_params(
+                basket="Basket 1", panel=synthetic_panel, timeline=timeline, base_params=_tiny_params(),
+                calibration_range=calibration_range, fold_days=1, n_trials=1, use_persistent_storage=False,
+                search_space={"does_not_exist": (1.0, 2.0)},
+            )
+#!####################
+
+
 class TestTuneAllBasketsAndOverrides:
     def test_build_basket_overrides_from_tune_all_baskets(self, synthetic_panel, timeline):
         idx = synthetic_panel["close"].index
@@ -128,3 +260,66 @@ class TestTuneAllBasketsAndOverrides:
         )
 
         assert calls == [("Basket 1", 100), ("Basket 2", 101), ("Basket 3", 102)]
+
+
+#!#################### NEU
+class TestSaveTuningResults:
+    """save_tuning_results fehlte komplett -- 05_tuning.ipynb rief
+    bt_tuning.save_tuning_results(...) auf und brach mit AttributeError ab."""
+
+    def _fake_result(self, basket="Basket 1"):
+        class _FakeStudy:
+            best_value = 1.23
+
+        return TuningResult(
+            basket=basket, study=_FakeStudy(),
+            trials_df=pd.DataFrame([{"trial_number": 0, "entry_z": 2.0, "objective": 1.23}]),
+            best_params={"entry_z": 2.0}, folds=[],
+        )
+
+    def test_writes_best_params_json_and_trials_parquet(self, tmp_path):
+        results = {"Basket 1": self._fake_result("Basket 1"), "Basket 2": self._fake_result("Basket 2")}
+        run_dir = save_tuning_results(results, label="my run!", tuning_dir=tmp_path)
+
+        assert run_dir.exists()
+        assert (run_dir / "best_params.json").exists()
+        assert (run_dir / "trials_basket-1.parquet").exists()
+        assert (run_dir / "trials_basket-2.parquet").exists()
+
+        import json
+        payload = json.loads((run_dir / "best_params.json").read_text())
+        assert payload["Basket 1"]["best_params"] == {"entry_z": 2.0}
+        assert payload["Basket 1"]["best_objective"] == pytest.approx(1.23)
+
+    def test_skips_empty_trials_df(self, tmp_path):
+        empty_result = TuningResult(
+            basket="Basket 1", study=self._fake_result().study,
+            trials_df=pd.DataFrame(), best_params={}, folds=[],
+        )
+        run_dir = save_tuning_results({"Basket 1": empty_result}, label="empty", tuning_dir=tmp_path)
+        assert not (run_dir / "trials_basket-1.parquet").exists()
+#!####################
+
+
+#!#################### NEU
+class TestOptunaDashboard:
+    """ensure_dashboard_running, portiert aus
+    notebooks/03_Tradeing/tuning_common.py (Modul jetzt geloescht)."""
+
+    def test_dashboard_ports_cover_all_strategies(self):
+        from Src.backtest.strategy import STRATEGY_REGISTRY
+
+        assert set(DASHBOARD_PORTS) == set(STRATEGY_REGISTRY)
+
+    def test_port_is_open_false_for_unused_port(self):
+        assert _port_is_open("localhost", 8199, timeout=0.2) is False
+
+    def test_ensure_dashboard_running_without_binary_returns_url_and_warns(self, monkeypatch, capsys, tmp_path):
+        """Ohne installiertes optuna-dashboard-Kommando darf die Funktion
+        NICHT crashen -- sie gibt die URL trotzdem zurueck und warnt nur,
+        damit ein Tuning-Lauf ohne das optionale Paket weiterlaeuft."""
+        monkeypatch.setattr("shutil.which", lambda _name: None)
+        url = ensure_dashboard_running(tmp_path / "doesnotexist.db", port=8199, open_browser=False)
+        assert url == "http://localhost:8199/"
+        assert "nicht gefunden" in capsys.readouterr().out
+#!####################

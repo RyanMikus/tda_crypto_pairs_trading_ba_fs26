@@ -175,6 +175,7 @@ class BacktestEngine:
                     timestamp=ts, bar_index=i, basket=position.basket, params=params,
                     snapshot=active_snapshot[position.basket], prices=prices,
                     open_positions=open_positions, equity=equity, free_slots=0,
+                    candle_minutes=self.config.candle_minutes,  #!#################### NEU
                 )
                 decision = evaluate_exit_chain(position, ctx, self.exit_chain)
                 if not decision.should_exit:
@@ -196,6 +197,7 @@ class BacktestEngine:
                 ctx = BarContext(
                     timestamp=ts, bar_index=i, basket=basket, params=params, snapshot=snapshot,
                     prices=prices, open_positions=open_positions, equity=equity, free_slots=free,
+                    candle_minutes=self.config.candle_minutes,  #!#################### NEU
                 )
                 state = self._get_or_fit_state(basket, snapshot, ctx, params)
                 if state is None or not state.definitions:

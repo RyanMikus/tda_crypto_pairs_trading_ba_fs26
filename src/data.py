@@ -34,6 +34,36 @@ def _month_files(start_ts: pd.Timestamp, end_ts: pd.Timestamp, ohlcv_dir: Path) 
     return [f for f in files if f.exists()]
 
 
+#!#################### NEU: dynamisch ermittelter Datenzeitraum statt fest
+#!#################### codierter DATA_START/DATA_END-Konstanten in Notebooks
+#!#################### (siehe notebooks/03_Tradeing/quick_tuning.ipynb, das
+#!#################### data_min/data_max aus dem kompletten geladenen ohlcv_df
+#!#################### ableitete -- hier liest nur erste/letzte Monatsdatei,
+#!#################### nicht alle Monate, deutlich schneller).
+def available_data_range(ohlcv_dir: Path = OHLCV_DIR) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """(frühester, spätester) Zeitstempel über alle vorhandenen OHLCV-
+    Monatsdateien -- liest dafür nur die timestamp-Spalte der chronologisch
+    ersten und letzten Datei (Dateien sind lückenlos aufeinanderfolgende
+    Monate, siehe _month_files), nicht den gesamten Datenbestand.
+
+    Returns:
+        (min_timestamp, max_timestamp), beide UTC-tz-aware.
+
+    Raises:
+        FileNotFoundError: falls ohlcv_dir keine ohlcv_*.parquet-Dateien enthält.
+    """
+    files = sorted(ohlcv_dir.glob("ohlcv_*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"Keine ohlcv_*.parquet-Dateien in {ohlcv_dir} gefunden.")
+
+    first = pd.read_parquet(files[0], columns=["timestamp"])
+    last = pd.read_parquet(files[-1], columns=["timestamp"]) if len(files) > 1 else first
+    min_ts = pd.to_datetime(first["timestamp"], utc=True).min()
+    max_ts = pd.to_datetime(last["timestamp"], utc=True).max()
+    return min_ts, max_ts
+#!####################
+
+
 def load_close_prices(tickers: list[str], start_date: str, n_candles: int) -> pd.DataFrame:
     """Lädt close-Preise für die gegebenen Ticker ab start_date, begrenzt auf
     n_candles Kerzen. Liest nur die dafür nötigen Monatsdateien.
@@ -83,8 +113,74 @@ def load_close_prices(tickers: list[str], start_date: str, n_candles: int) -> pd
 
 
 def full_candle_index(start: pd.Timestamp, end: pd.Timestamp, candle_minutes: int = 5) -> pd.DatetimeIndex:
-    """Lückenloser 5-Min-UTC-DatetimeIndex von start bis end (inklusive)."""
+    """Lückenloser UTC-DatetimeIndex von start bis end (inklusive), im candle_minutes-Raster."""
     return pd.date_range(start, end, freq=f"{candle_minutes}min", tz="UTC")
+
+
+#!#################### NEU: Aggregation eines 5-Min-Panels (load_ohlcv_panel)
+#!#################### auf gröbere Kerzengrössen (10/15/30 min, ...), damit die
+#!#################### Engine mit anderen candle_minutes laufen kann, ohne dass
+#!#################### die Rohdaten selbst in einer anderen Auflösung vorliegen
+#!#################### müssen.
+_RESAMPLE_AGG_BY_FIELD = {
+    "open": "first",
+    "high": "max",
+    "low": "min",
+    "close": "last",
+    "volume_base": "sum",
+    "volume_quote": "sum",
+    "trade_count": "sum",
+}
+
+
+def resample_ohlcv_panel(
+    panel: dict[str, pd.DataFrame], *, source_minutes: int, target_minutes: int,
+) -> dict[str, pd.DataFrame]:
+    """Aggregiert ein von load_ohlcv_panel geladenes 5-Min-Panel auf eine
+    gröbere Kerzengrösse (z.B. 10/15/30 min), pro Feld mit der jeweils
+    korrekten OHLCV-Aggregation (siehe _RESAMPLE_AGG_BY_FIELD).
+
+    target_minutes muss ein ganzzahliges Vielfaches von source_minutes sein,
+    sonst würden Aggregationsfenster nicht auf den Grenzen der Rohkerzen
+    liegen (z.B. 5-Min-Rohdaten auf 7-Min-Kerzen resamplen).
+
+    Args:
+        panel: dict field -> DataFrame(index=timestamp, columns=market_symbol),
+            wie von load_ohlcv_panel zurückgegeben (bereits auf ein lückenloses
+            source_minutes-Raster reindiziert).
+        source_minutes: Kerzengrösse der Rohdaten in panel.
+        target_minutes: Gewünschte Ziel-Kerzengrösse in Minuten.
+
+    Returns:
+        dict field -> DataFrame, gleiche Struktur wie panel, aber auf
+        target_minutes aggregiert. Enthält nur Felder, für die eine
+        Aggregationsregel bekannt ist (siehe _RESAMPLE_AGG_BY_FIELD).
+
+    Raises:
+        ValueError: falls target_minutes kein Vielfaches von source_minutes
+            ist, oder falls panel ein Feld ohne bekannte Aggregationsregel
+            enthält.
+    """
+    if target_minutes <= 0 or source_minutes <= 0:
+        raise ValueError(f"source_minutes/target_minutes müssen positiv sein, erhalten: {source_minutes}/{target_minutes}")
+    if target_minutes % source_minutes != 0:
+        raise ValueError(
+            f"target_minutes ({target_minutes}) muss ein Vielfaches von source_minutes "
+            f"({source_minutes}) sein, sonst liegen die Aggregationsfenster nicht auf "
+            f"den Grenzen der Rohkerzen."
+        )
+    unknown_fields = set(panel) - set(_RESAMPLE_AGG_BY_FIELD)
+    if unknown_fields:
+        raise ValueError(f"Keine Resample-Regel für Felder: {sorted(unknown_fields)}")
+    if target_minutes == source_minutes:
+        return panel
+
+    resampled: dict[str, pd.DataFrame] = {}
+    for field, matrix in panel.items():
+        agg = _RESAMPLE_AGG_BY_FIELD[field]
+        resampled[field] = matrix.resample(f"{target_minutes}min").agg(agg)
+    return resampled
+#!####################
 
 
 def load_ohlcv_panel(

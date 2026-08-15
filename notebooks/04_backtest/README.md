@@ -30,6 +30,19 @@ Konvention, damit Runs untereinander vergleichbar bleiben:
 5. `04_run_comparison.ipynb` führt **nie** einen Backtest aus, sondern liest
    ausschließlich gespeicherte Runs aus `data/processed/backtests/` — bleibt
    dadurch in Sekunden reproduzierbar.
+6. `06_strategy_comparison.ipynb` führt mehrere Strategien (Default:
+   `pairwise_zscore` vs. `garch_wilks`) auf denselben Baskets/Zeitraum aus,
+   speichert jeden Run einzeln (Punkt 4) und vergleicht sie danach mit
+   denselben Bausteinen wie `04_run_comparison.ipynb`. Funktionales Pendant
+   zum alten `notebooks/03_Tradeing/strategy_comparison.ipynb`, hier auf der
+   aktuellen Engine statt der alten `pairtrading_engine.py`-Familie.
+7. `07_quick_tuning.ipynb` bedient `Src.backtest.tuning.tune_basket_params`
+   über ein ipywidgets-Panel pro Strategie (Checkbox "tunen?" + Fix-/
+   Bereichsfeld pro Parameter, siehe `Src.backtest.tuning.SearchSpec`).
+   Funktionales Pendant zum alten `notebooks/03_Tradeing/quick_tuning.ipynb`,
+   hier über den generischen `search_space`-Parameter statt dreier
+   getrennter Tuner-Module (`quick_tune_ewma.py`/`quick_tune_bollinger.py`/
+   `quick_tune_garch.py`).
 
 ## Look-Ahead-Guards
 

@@ -81,7 +81,8 @@ class BasketParams:
     # docs/project/BA_aufgabenstellung_zusatz.pdf und exit_rules.TopologicalBreakRule).
     # epsilon* = position.entry_death (eingefroren bei Entry aus CliqueSnapshot.death,
     # NICHT persistence). topo_break_window_candles=None -> Default ist
-    # position.entry_lookback_days in Kerzen umgerechnet (CANDLES_PER_DAY).
+    # position.entry_lookback_days in Kerzen umgerechnet (candles_per_day(candle_minutes),
+    # siehe exit_rules.TopologicalBreakRule -- skaliert mit der Kerzengrösse des Runs).
     topo_break_enabled: bool = False
     topo_break_delta: float = 0.001
     topo_break_window_candles: int | None = None
@@ -100,6 +101,17 @@ class BasketParams:
     min_half_life_candles: float = 6.0
     max_half_life_candles: float = 288 * 2
     min_johansen_relations: int = 1
+
+    #!#################### NEU: Parameter fuer GarchWilksToleranceStrategy
+    #!#################### (Src/backtest/strategy.py) -- Gegenstueck zu
+    #!#################### entry_z/exit_z bei BaseSpreadZScoreStrategy, siehe
+    #!#################### dortigen Docstring fuer die Wilks-Entry/Exit-Logik.
+    wilks_lookback_candles: int = 288  # rollierendes Fenster fuer die Xmax-Historie der Wilks-Grenzen
+    wilks_p_content: float = 0.95
+    wilks_confidence: float = 0.95
+    garch_dist: str = "t"
+    garch_max_iter: int = 500
+    #!####################
 
     # --- Positionslimits ---
     min_holding_candles: int = 1

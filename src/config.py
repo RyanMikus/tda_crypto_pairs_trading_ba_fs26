@@ -31,9 +31,24 @@ TOP_N               = 100
 VS_CURRENCY         = "usd"
 
 # Backtest-Engine: Kerzen-/Zeitkonstanten (Krypto handelt 24/7/365, kein Börsenkalender)
-CANDLE_MINUTES     = 5
+CANDLE_MINUTES     = 5  # Default-Kerzengrösse; siehe candles_per_day/candles_per_year für andere Kerzengrössen
 CANDLES_PER_DAY    = 24 * 60 // CANDLE_MINUTES  # 288
 CANDLES_PER_YEAR   = 365 * 24 * 60 // CANDLE_MINUTES  # 105_120
+
+
+#!#################### NEU: Kerzengrösse laufzeitseitig parametrisierbar,
+#!#################### statt CANDLES_PER_DAY/CANDLES_PER_YEAR nur für den
+#!#################### CANDLE_MINUTES-Default (5) zu kennen. Bestehende
+#!#################### Konstanten bleiben als 5-Min-Default unverändert.
+def candles_per_day(candle_minutes: int) -> float:
+    """Kerzen pro Tag für eine beliebige Kerzengrösse (24h/365 Krypto-Handel)."""
+    return 24 * 60 / candle_minutes
+
+
+def candles_per_year(candle_minutes: int) -> float:
+    """Kerzen pro Jahr für eine beliebige Kerzengrösse (24h/365 Krypto-Handel)."""
+    return 365 * candles_per_day(candle_minutes)
+#!####################
 
 # Binance Spot-Gebührensätze in bps (Stand Implementierung -- bei Bedarf gegen
 # die aktuelle Binance-Gebührentabelle verifizieren, VIP-Stufen ändern sich).

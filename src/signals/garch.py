@@ -28,6 +28,29 @@ from scipy.optimize import minimize
 from scipy.special import gammaln
 
 
+#!#################### NEU: oeffentliches Pendant zu _garch_sigma2, fuer
+#!#################### Aufrufer (GarchWilksToleranceStrategy), die den
+#!#################### Sigma-Pfad aus BEREITS gefitteten Parametern (z.B. aus
+#!#################### compute_garch_volatility()[1] bei Formation) brauchen,
+#!#################### ohne bei jeder Bar neu zu fitten.
+def garch_sigma_path(returns: pd.Series, *, omega: float, alpha: float, beta: float) -> pd.Series:
+    """sigma_t-Pfad (nicht sigma_t^2) fuer gegebene, bereits gefittete
+    GARCH(1,1)-Parameter -- siehe _garch_sigma2 fuer die Rekursion.
+
+    Args:
+        returns: 1D-Return-/Spread-Serie, darf NaN enthalten (siehe
+            _garch_sigma2 -- NaN-Innovationen werden als 0 behandelt).
+        omega, alpha, beta: gefittete GARCH(1,1)-Parameter, z.B. aus
+            compute_garch_volatility(...)[1].
+
+    Returns:
+        Series gleicher Laenge/Index wie returns (sigma_t).
+    """
+    sigma2 = _garch_sigma2(returns.to_numpy(dtype=float), omega, alpha, beta)
+    return pd.Series(np.sqrt(sigma2), index=returns.index)
+#!####################
+
+
 def _garch_sigma2(returns: np.ndarray, omega: float, alpha: float, beta: float) -> np.ndarray:
     """sigma_t^2-Pfad fuer gegebene GARCH(1,1)-Parameter, kausal (kein
     Blick auf zukuenftige a_t). sigma_0^2 = unbedingte Varianz (long-run
