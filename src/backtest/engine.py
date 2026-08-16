@@ -58,6 +58,8 @@ class BacktestEngine:
     # ------------------------------------------------------------------
 
     def _timestamp_index(self, ts) -> int:
+        """
+        Liefert den Index der Kerze, die exakt auf den Timestamp ts fällt."""
         ts = pd.Timestamp(ts)
         if ts.tzinfo is None:
             ts = ts.tz_localize("UTC")
@@ -70,6 +72,9 @@ class BacktestEngine:
         return int(pos)
 
     def _resolved_availability_lag(self) -> pd.Timedelta:
+        """Liefert den Clique-Availability-Lag, der für die Backtest-Engine gilt.
+        bedeutet: wie weit die Clique-Definitionen hinter dem aktuellen Timestamp liegen (z.B. 1 Tag).
+        Wenn config.clique_availability_lag auf "auto" steht, wird der Lag automatisch auf das Discovery-Intervall gesetzt, aber maximal 1 Tag."""
         lag = self.config.clique_availability_lag
         if lag != "auto":
             return lag
@@ -77,6 +82,8 @@ class BacktestEngine:
         return interval if interval < pd.Timedelta(days=1) else pd.Timedelta(days=1)
 
     def _check_warmup(self, start_idx: int) -> None:
+        """Prüft, ob für jeden Basket genügend Historie vor config.start vorhanden ist, um die Strategie zu initialisieren.
+        Wenn nicht, wird eine ValueError mit einer verständlichen Fehlermeldung ausgelöst."""
         for basket in self.config.baskets:
             params = self.config.params_for(basket)
             required = self.strategy.required_history_candles(params)
@@ -88,6 +95,16 @@ class BacktestEngine:
                 )
 
     def describe_guards(self) -> str:
+        """G1-G8 Guards, die für die Backtest-Engine gelten.
+        G1: Clique-Verfügbarkeitslag (Discovery-Intervall)
+        G2: PriceWindow-Cutoff (strategien können nicht über bar_index hinaus lesen)
+        G3: Ausführungs-Lag (Fill-Preis-Feld)
+        G4: Eingefrorene Schätzer (SpreadDefinition wird bei Formation fixiert, kein Re-Fit während offener Position)
+        G5: Basket-Zuordnung (aus dem Clique-Cache übernommen, nicht zur Bar-Zeit neu abgeleitet)
+        G6: Calibration-Zeitraum (Formation-Range) und Backtest-Zeitraum
+        G7: Warm-up (Kerzen vor config.start, pro Basket)
+        G8: Snapshot-Ablauf (max_snapshot_age)
+        """
         lag = self._resolved_availability_lag()
         interval = self.timeline.infer_interval()
         required = {b: self.strategy.required_history_candles(self.config.params_for(b)) for b in self.config.baskets}
@@ -108,6 +125,11 @@ class BacktestEngine:
     # ------------------------------------------------------------------
 
     def _get_or_fit_state(self, basket, snapshot, ctx, params) -> StrategyState | None:
+        """Liefert den StrategyState für die gegebene Clique-Snapshot-Definition.
+        Wenn der State bereits im Cache ist und nicht älter als _DEFAULT_MAX_STATE_AGE, wird er zurückgegeben.
+        Ansonsten wird self.strategy.on_snapshot() aufgerufen, um den State zu berechnen und im Cache zu speichern.
+        Wenn on_snapshot() fehlschlägt, wird None zurückgegeben und eine Warnung in self.warnings geschrieben.
+        State bedeutet: die Schätzer (z.B. OLS/Johansen) für die gegebene Clique-Definition, die für die Entry/Exit-Entscheidungen verwendet werden."""
         key = (basket, snapshot.membership_key)
         cached = self._state_cache.get(key)
         if cached is not None and (ctx.timestamp - cached.fitted_at) <= _DEFAULT_MAX_STATE_AGE:
@@ -121,6 +143,10 @@ class BacktestEngine:
         return state
 
     def _equity_row(self, ts, equity: float) -> dict:
+        """Erstellt eine Equity-Zeile für den gegebenen Timestamp und das gegebene Equity-Level.
+        Die Equity-Zeile enthält die wichtigsten Kennzahlen für den Backtest-Report.
+        Das bedeutet: Equity, Cash, Realized PnL, Cost, Gross Exposure, Anzahl offener Positionen pro Basket.
+        diese Zeile wird später in ein DataFrame umgewandelt, das die Equity-Kurve des Backtests darstellt."""
         row = {
             "timestamp": ts,
             "equity": equity,
@@ -140,6 +166,8 @@ class BacktestEngine:
     # ------------------------------------------------------------------
 
     def run(self, *, progress: bool = False) -> BacktestResult:
+        """Führt den Backtest aus und liefert das Ergebnis als BacktestResult.
+        progress: wenn True, wird ein Fortschrittsbalken angezeigt (tqdm)."""
         start_idx = self._timestamp_index(self.config.start)
         end_idx = self._timestamp_index(self.config.end)
         self._check_warmup(start_idx)
