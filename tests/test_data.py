@@ -187,3 +187,49 @@ class TestResampleOhlcvPanelOnRealData:
             out["volume_base"].sum(), real_panel_5m["volume_base"].sum(), check_names=False,
         )
 #!####################
+
+
+#!#################### NEU: Luecken-/Sprungfreiheit der 5-Min-ROHDATEN selbst
+#!#################### -- gehoert NICHT zu TestResampleOhlcvPanelOnRealData
+#!#################### (das prueft die Aggregation, nicht die Rohdatenqualitaet).
+#!#################### close(t) sollte nahe an open(t+1) liegen, WENN die
+#!#################### 5-Min-Kerzen tatsaechlich lueckenlos aneinanderhaengen
+#!#################### -- grosse Abweichungen deuten auf fehlende Kerzen oder
+#!#################### Datenfehler hin, nicht auf normales Marktrauschen
+#!#################### (das waere INNERHALB einer Kerze, nicht am Uebergang).
+@pytest.mark.skipif(not OHLCV_DIR.exists(), reason="OHLCV-Rohdaten (data/raw/fetched/asset_ohlcv_5m/) nicht vorhanden")
+class TestRawPanelCandleContinuity:
+    """Prueft, dass aufeinanderfolgende 5-Min-Rohkerzen (load_ohlcv_panel)
+    lueckenlos ineinander uebergehen: close einer Kerze sollte nahe am open
+    der naechsten liegen. Das ist eine Eigenschaft der ROHDATEN (Datenqualitaet
+    des Anbieters), nicht des Resamplings -- deshalb hier separat statt in
+    TestResampleOhlcvPanelOnRealData."""
+
+    @classmethod
+    @pytest.fixture(scope="class")
+    def real_panel_5m(cls):
+        start, _ = available_data_range()
+        panel = load_ohlcv_panel(
+            start=start, end=start + pd.Timedelta(hours=6),
+            fields=("open", "close"),
+        )
+        complete_symbols = panel["close"].dropna(axis=1, how="any").columns[:5].tolist()
+        assert len(complete_symbols) >= 1, "kein Symbol mit vollstaendigen Daten im Testfenster gefunden"
+        return {field: df[complete_symbols] for field, df in panel.items()}
+
+    def test_close_is_close_to_next_open(self, real_panel_5m):
+        """close(t) vs. open(t+1) darf relativ zum Preisniveau nur eine kleine
+        Abweichung haben (hier: max. 5%) -- ein Bruch waere z.B. ein Zeichen
+        fuer fehlende/ausgelassene Kerzen im Rohdatensatz. Bewusst keine
+        Gleichheit gefordert (echte Maerkte koennen zwischen Kerzen minimal
+        springen), nur eine Plausibilitaetsgrenze."""
+        close = real_panel_5m["close"]
+        open_ = real_panel_5m["open"]
+
+        close_t = close.iloc[:-1].reset_index(drop=True)
+        open_t_plus_1 = open_.iloc[1:].reset_index(drop=True)
+
+        rel_gap = ((open_t_plus_1 - close_t) / close_t).abs()
+        max_gap = rel_gap.max().max()
+        assert max_gap < 0.05, f"groesste relative Luecke close(t)->open(t+1): {max_gap:.4%} (>5%, moegliche Datenluecke)"
+#!####################

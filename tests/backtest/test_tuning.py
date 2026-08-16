@@ -8,6 +8,7 @@ from Src.backtest.tuning import (
     tune_all_baskets, tune_basket_params,
 )
 from Src.backtest.tuning import _is_range_spec, _suggest_param, save_tuning_results  #!#################### NEU
+from Src.backtest.tuning import load_all_tuning_results  #!#################### NEU
 from Src.backtest.tuning import DASHBOARD_PORTS, _port_is_open, ensure_dashboard_running  #!#################### NEU
 from Src.backtest.tuning import fold_days_for_n_windows  #!#################### NEU
 
@@ -298,6 +299,59 @@ class TestSaveTuningResults:
         )
         run_dir = save_tuning_results({"Basket 1": empty_result}, label="empty", tuning_dir=tmp_path)
         assert not (run_dir / "trials_basket-1.parquet").exists()
+
+    #!#################### NEU
+    def test_stores_candle_minutes_per_basket(self, tmp_path):
+        run_dir = save_tuning_results(
+            {"Basket 1": self._fake_result("Basket 1")}, label="15min run", tuning_dir=tmp_path, candle_minutes=15,
+        )
+        import json
+        payload = json.loads((run_dir / "best_params.json").read_text())
+        assert payload["Basket 1"]["candle_minutes"] == 15
+
+    def test_candle_minutes_defaults_to_5(self, tmp_path):
+        run_dir = save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="default", tuning_dir=tmp_path)
+        import json
+        payload = json.loads((run_dir / "best_params.json").read_text())
+        assert payload["Basket 1"]["candle_minutes"] == 5
+    #!####################
+#!####################
+
+
+#!#################### NEU
+class TestLoadAllTuningResults:
+    def _fake_result(self, basket="Basket 1"):
+        class _FakeStudy:
+            best_value = 1.23
+
+        return TuningResult(
+            basket=basket, study=_FakeStudy(),
+            trials_df=pd.DataFrame([{"trial_number": 0, "entry_z": 2.0, "objective": 1.23}]),
+            best_params={"entry_z": 2.0}, folds=[],
+        )
+
+    def test_empty_dir_returns_empty_dataframe_with_columns(self, tmp_path):
+        df = load_all_tuning_results(tuning_dir=tmp_path / "does_not_exist")
+        assert df.empty
+        assert list(df.columns) == ["run_id", "basket", "candle_minutes", "best_objective", "n_trials", "n_folds", "best_params"]
+
+    def test_aggregates_across_multiple_runs_and_candle_minutes(self, tmp_path):
+        save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="5min", tuning_dir=tmp_path, candle_minutes=5)
+        save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="15min", tuning_dir=tmp_path, candle_minutes=15)
+        save_tuning_results({"Basket 2": self._fake_result("Basket 2")}, label="30min", tuning_dir=tmp_path, candle_minutes=30)
+
+        df = load_all_tuning_results(tuning_dir=tmp_path)
+        assert len(df) == 3
+        assert set(df["candle_minutes"]) == {5, 15, 30}
+        assert set(df.loc[df["candle_minutes"] == 30, "basket"]) == {"Basket 2"}
+
+    def test_ignores_run_dirs_without_best_params_json(self, tmp_path):
+        stray_dir = tmp_path / "not_a_tuning_run"
+        stray_dir.mkdir()
+        save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="run", tuning_dir=tmp_path, candle_minutes=5)
+
+        df = load_all_tuning_results(tuning_dir=tmp_path)
+        assert len(df) == 1
 #!####################
 
 

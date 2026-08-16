@@ -555,10 +555,22 @@ def _tuning_slug(label: str) -> str:
 
 def save_tuning_results(
     results: dict[str, TuningResult], *, label: str, tuning_dir: Path = TUNING_DIR,
+    candle_minutes: int = CANDLE_MINUTES,  #!#################### NEU
 ) -> Path:
     """Speichert best_params.json (alle Baskets) + trials_<basket>.parquet
     (je Basket) unter tuning_dir/<run_id>/. run_id = Zeitstempel + Slug(label),
     analog zu runs.save_run.
+
+    #!#################### NEU: candle_minutes wird in JEDEM Basket-Eintrag von
+    #!#################### best_params.json mitgespeichert (nicht nur einmal
+    #!#################### auf Top-Level) -- macht spaetere Kerzenlaengen-
+    #!#################### Vergleiche moeglich, ohne den run_id/Dateinamen
+    #!#################### parsen zu muessen: einfach alle best_params.json
+    #!#################### unter tuning_dir einlesen und nach candle_minutes
+    #!#################### gruppieren/filtern (siehe
+    #!#################### notebooks/04_backtest/07_quick_tuning.ipynb,
+    #!#################### Abschnitt "Kerzenlaengen-Vergleich").
+    #!####################
 
     Returns:
         Pfad zum Lauf-Ordner.
@@ -576,6 +588,7 @@ def save_tuning_results(
             "best_objective": float(result.study.best_value),
             "n_trials": len(result.trials_df),
             "n_folds": len(result.folds),
+            "candle_minutes": candle_minutes,  #!#################### NEU
         }
         for basket, result in results.items()
     }
@@ -587,6 +600,52 @@ def save_tuning_results(
             result.trials_df.to_parquet(run_dir / f"trials_{slug}.parquet", index=False)
 
     return run_dir
+
+
+#!#################### NEU: laedt best_params.json aus ALLEN gespeicherten
+#!#################### Tuning-Laeufen und baut eine flache Vergleichstabelle
+#!#################### (ein Zeile pro Basket x Kerzenlaenge x Run) -- macht
+#!#################### den Vergleich "welche Kerzenlaenge war fuer Basket X
+#!#################### am besten" moeglich, ohne jeden run_id-Ordner von Hand
+#!#################### zu oeffnen.
+def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
+    """Liest jede best_params.json unter tuning_dir/<run_id>/ und baut eine
+    lange Tabelle (eine Zeile pro Basket-Eintrag pro Run) mit den Spalten
+    run_id, basket, candle_minutes, best_objective, n_trials, n_folds,
+    best_params (dict).
+
+    Läufe aus save_tuning_results VOR der candle_minutes-Ergänzung haben
+    candle_minutes=NaN (Feld fehlte im gespeicherten JSON) -- werden nicht
+    übersprungen, aber beim Kerzenlängen-Vergleich sind sie nicht eindeutig
+    zuordenbar.
+
+    Returns:
+        DataFrame, leer (mit den o.g. Spalten) falls tuning_dir keine
+        gespeicherten Läufe enthält.
+    """
+    import json
+
+    columns = ["run_id", "basket", "candle_minutes", "best_objective", "n_trials", "n_folds", "best_params"]
+    if not tuning_dir.exists():
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    for run_dir in sorted(p for p in tuning_dir.iterdir() if p.is_dir()):
+        best_params_path = run_dir / "best_params.json"
+        if not best_params_path.exists():
+            continue
+        payload = json.loads(best_params_path.read_text())
+        for basket, entry in payload.items():
+            rows.append({
+                "run_id": run_dir.name,
+                "basket": basket,
+                "candle_minutes": entry.get("candle_minutes", float("nan")),
+                "best_objective": entry.get("best_objective"),
+                "n_trials": entry.get("n_trials"),
+                "n_folds": entry.get("n_folds"),
+                "best_params": entry.get("best_params"),
+            })
+    return pd.DataFrame(rows, columns=columns)
 #!####################
 
 
