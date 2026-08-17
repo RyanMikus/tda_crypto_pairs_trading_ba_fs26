@@ -53,8 +53,17 @@ def candles_per_year(candle_minutes: int) -> float:
 # Binance Spot-Gebührensätze in bps (Stand Implementierung -- bei Bedarf gegen
 # die aktuelle Binance-Gebührentabelle verifizieren, VIP-Stufen ändern sich).
 # "standard" (kein BNB-Rabatt, kein VIP-Status) ist der Default in BasketParams.
+#!#################### NEU: "zero_cost" -- idealisierter Backtest ohne Handels-
+#!#################### kosten (fee_bps=0), als Referenzpunkt/obere Schranke fuer
+#!#################### die Rendite, unabhaengig von Gebuehren-/Slippage-Annahmen.
+#!#################### Slippage muss separat auf 0 gesetzt werden (siehe
+#!#################### notebooks/04_backtest/07_quick_tuning.ipynb), da sie ein
+#!#################### eigener BasketParams-Parameter ist (slippage_bps), nicht
+#!#################### Teil dieses Fee-Preset-Dicts.
 BINANCE_FEE_PRESETS_BPS = {
     "standard": 10.0,
     "bnb_discount": 7.5,
     "vip1": 9.0,
+    "zero_cost": 0.0,
 }
+#!####################

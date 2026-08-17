@@ -556,20 +556,25 @@ def _tuning_slug(label: str) -> str:
 def save_tuning_results(
     results: dict[str, TuningResult], *, label: str, tuning_dir: Path = TUNING_DIR,
     candle_minutes: int = CANDLE_MINUTES,  #!#################### NEU
+    fee_preset: str | None = None,  #!#################### NEU
 ) -> Path:
     """Speichert best_params.json (alle Baskets) + trials_<basket>.parquet
     (je Basket) unter tuning_dir/<run_id>/. run_id = Zeitstempel + Slug(label),
     analog zu runs.save_run.
 
-    #!#################### NEU: candle_minutes wird in JEDEM Basket-Eintrag von
-    #!#################### best_params.json mitgespeichert (nicht nur einmal
-    #!#################### auf Top-Level) -- macht spaetere Kerzenlaengen-
-    #!#################### Vergleiche moeglich, ohne den run_id/Dateinamen
-    #!#################### parsen zu muessen: einfach alle best_params.json
-    #!#################### unter tuning_dir einlesen und nach candle_minutes
+    #!#################### NEU: candle_minutes UND fee_preset werden in JEDEM
+    #!#################### Basket-Eintrag von best_params.json mitgespeichert
+    #!#################### (nicht nur einmal auf Top-Level) -- macht spaetere
+    #!#################### Kerzenlaengen-/Kostenmodell-Vergleiche moeglich
+    #!#################### (z.B. "zero_cost" vs. "standard"), ohne den
+    #!#################### run_id/Dateinamen parsen zu muessen: einfach alle
+    #!#################### best_params.json unter tuning_dir einlesen und
     #!#################### gruppieren/filtern (siehe
     #!#################### notebooks/04_backtest/07_quick_tuning.ipynb,
-    #!#################### Abschnitt "Kerzenlaengen-Vergleich").
+    #!#################### Abschnitt "Kerzenlaengen-Vergleich"). fee_preset
+    #!#################### ist rein INFORMATIV (kein BasketParams-Feld) --
+    #!#################### die tatsaechlichen Kosten stecken in base_params
+    #!#################### selbst, nicht in best_params.
     #!####################
 
     Returns:
@@ -589,6 +594,7 @@ def save_tuning_results(
             "n_trials": len(result.trials_df),
             "n_folds": len(result.folds),
             "candle_minutes": candle_minutes,  #!#################### NEU
+            "fee_preset": fee_preset,  #!#################### NEU
         }
         for basket, result in results.items()
     }
@@ -611,13 +617,13 @@ def save_tuning_results(
 def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
     """Liest jede best_params.json unter tuning_dir/<run_id>/ und baut eine
     lange Tabelle (eine Zeile pro Basket-Eintrag pro Run) mit den Spalten
-    run_id, basket, candle_minutes, best_objective, n_trials, n_folds,
-    best_params (dict).
+    run_id, basket, candle_minutes, fee_preset, best_objective, n_trials,
+    n_folds, best_params (dict).
 
-    Läufe aus save_tuning_results VOR der candle_minutes-Ergänzung haben
-    candle_minutes=NaN (Feld fehlte im gespeicherten JSON) -- werden nicht
-    übersprungen, aber beim Kerzenlängen-Vergleich sind sie nicht eindeutig
-    zuordenbar.
+    Läufe aus save_tuning_results VOR der candle_minutes/fee_preset-Ergänzung
+    haben candle_minutes=NaN bzw. fee_preset=None (Feld fehlte im
+    gespeicherten JSON) -- werden nicht übersprungen, aber beim Vergleich
+    sind sie nicht eindeutig zuordenbar.
 
     Returns:
         DataFrame, leer (mit den o.g. Spalten) falls tuning_dir keine
@@ -625,7 +631,7 @@ def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
     """
     import json
 
-    columns = ["run_id", "basket", "candle_minutes", "best_objective", "n_trials", "n_folds", "best_params"]
+    columns = ["run_id", "basket", "candle_minutes", "fee_preset", "best_objective", "n_trials", "n_folds", "best_params"]
     if not tuning_dir.exists():
         return pd.DataFrame(columns=columns)
 
@@ -640,6 +646,7 @@ def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
                 "run_id": run_dir.name,
                 "basket": basket,
                 "candle_minutes": entry.get("candle_minutes", float("nan")),
+                "fee_preset": entry.get("fee_preset"),
                 "best_objective": entry.get("best_objective"),
                 "n_trials": entry.get("n_trials"),
                 "n_folds": entry.get("n_folds"),

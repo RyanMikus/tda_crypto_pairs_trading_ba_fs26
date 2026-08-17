@@ -314,6 +314,20 @@ class TestSaveTuningResults:
         import json
         payload = json.loads((run_dir / "best_params.json").read_text())
         assert payload["Basket 1"]["candle_minutes"] == 5
+
+    def test_stores_fee_preset_per_basket(self, tmp_path):
+        run_dir = save_tuning_results(
+            {"Basket 1": self._fake_result("Basket 1")}, label="zero cost run", tuning_dir=tmp_path, fee_preset="zero_cost",
+        )
+        import json
+        payload = json.loads((run_dir / "best_params.json").read_text())
+        assert payload["Basket 1"]["fee_preset"] == "zero_cost"
+
+    def test_fee_preset_defaults_to_none(self, tmp_path):
+        run_dir = save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="default", tuning_dir=tmp_path)
+        import json
+        payload = json.loads((run_dir / "best_params.json").read_text())
+        assert payload["Basket 1"]["fee_preset"] is None
     #!####################
 #!####################
 
@@ -333,7 +347,7 @@ class TestLoadAllTuningResults:
     def test_empty_dir_returns_empty_dataframe_with_columns(self, tmp_path):
         df = load_all_tuning_results(tuning_dir=tmp_path / "does_not_exist")
         assert df.empty
-        assert list(df.columns) == ["run_id", "basket", "candle_minutes", "best_objective", "n_trials", "n_folds", "best_params"]
+        assert list(df.columns) == ["run_id", "basket", "candle_minutes", "fee_preset", "best_objective", "n_trials", "n_folds", "best_params"]
 
     def test_aggregates_across_multiple_runs_and_candle_minutes(self, tmp_path):
         save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="5min", tuning_dir=tmp_path, candle_minutes=5)
@@ -352,6 +366,15 @@ class TestLoadAllTuningResults:
 
         df = load_all_tuning_results(tuning_dir=tmp_path)
         assert len(df) == 1
+
+    #!#################### NEU
+    def test_aggregates_fee_preset(self, tmp_path):
+        save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="standard", tuning_dir=tmp_path, fee_preset="standard")
+        save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="zero cost", tuning_dir=tmp_path, fee_preset="zero_cost")
+
+        df = load_all_tuning_results(tuning_dir=tmp_path)
+        assert set(df["fee_preset"]) == {"standard", "zero_cost"}
+    #!####################
 #!####################
 
 
