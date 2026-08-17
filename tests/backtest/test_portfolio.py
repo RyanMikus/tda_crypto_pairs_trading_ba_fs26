@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from Src.backtest.config import BasketParams
-from Src.backtest.portfolio import Portfolio, dollar_neutral_fractions, transaction_cost
-from Src.backtest.types import EntrySignal, SpreadDefinition
+from src.backtest.config import BasketParams
+from src.backtest.portfolio import Portfolio, dollar_neutral_fractions, transaction_cost
+from src.backtest.types import EntrySignal, SpreadDefinition
 
 
 class TestDollarNeutralFractions:
@@ -115,6 +115,52 @@ class TestPortfolioOpen:
         position = next(iter(portfolio.open_positions.values()))
         assert equity_after == pytest.approx(equity_before - position.entry_cost)
 
+    def test_sizing_multiplier_scales_gross_notional(self):
+        """Dynamic Position Sizing (BasketParams.dynamic_sizing_enabled) --
+        sizing_multiplier kommt aus EntrySignal.meta (siehe strategy.py::
+        _resolve_entry_threshold_and_sizing), Portfolio wendet ihn nur an."""
+        portfolio = _make_portfolio([{"AAAUSDT": 100.0, "BBBUSDT": 50.0}] * 2)
+        params = BasketParams(capital_per_position=0.1)
+        signal = EntrySignal(
+            spread=_spread_def(), direction=1, signal_value=3.0, spread_value=0.0, priority=3.0,
+            meta={"sizing_multiplier": 2.0},
+        )
+        equity_before = portfolio.equity(0)
+        portfolio.queue_open(
+            signal=signal, basket="Basket 1", snapshot=_FakeSnapshot(), params=params,
+            strategy_name="pairwise_zscore", fill_at_bar_index=1,
+        )
+        portfolio.execute_pending(bar_index=1, timestamp=pd.Timestamp("2025-01-01 00:05", tz="UTC"))
+        position = next(iter(portfolio.open_positions.values()))
+        assert position.gross_notional == pytest.approx(params.capital_per_position * equity_before * 2.0)
+
+    def test_entry_threshold_z_defaults_to_params_entry_z_without_meta(self):
+        portfolio = _make_portfolio([{"AAAUSDT": 100.0, "BBBUSDT": 50.0}] * 2)
+        params = BasketParams(entry_z=2.5, capital_per_position=0.1)
+        signal = EntrySignal(spread=_spread_def(), direction=1, signal_value=3.0, spread_value=0.0, priority=3.0)
+        portfolio.queue_open(
+            signal=signal, basket="Basket 1", snapshot=_FakeSnapshot(), params=params,
+            strategy_name="pairwise_zscore", fill_at_bar_index=1,
+        )
+        portfolio.execute_pending(bar_index=1, timestamp=pd.Timestamp("2025-01-01 00:05", tz="UTC"))
+        position = next(iter(portfolio.open_positions.values()))
+        assert position.entry_threshold_z == pytest.approx(2.5)
+
+    def test_entry_threshold_z_taken_from_meta_when_present(self):
+        portfolio = _make_portfolio([{"AAAUSDT": 100.0, "BBBUSDT": 50.0}] * 2)
+        params = BasketParams(entry_z=2.5, capital_per_position=0.1)
+        signal = EntrySignal(
+            spread=_spread_def(), direction=1, signal_value=3.0, spread_value=0.0, priority=3.0,
+            meta={"entry_threshold_z": 1.7},
+        )
+        portfolio.queue_open(
+            signal=signal, basket="Basket 1", snapshot=_FakeSnapshot(), params=params,
+            strategy_name="pairwise_zscore", fill_at_bar_index=1,
+        )
+        portfolio.execute_pending(bar_index=1, timestamp=pd.Timestamp("2025-01-01 00:05", tz="UTC"))
+        position = next(iter(portfolio.open_positions.values()))
+        assert position.entry_threshold_z == pytest.approx(1.7)
+
     def test_no_fill_when_price_missing(self):
         prices = [{"AAAUSDT": 100.0, "BBBUSDT": 50.0}, {"AAAUSDT": np.nan, "BBBUSDT": 50.0}]
         portfolio = _make_portfolio(prices)
@@ -160,6 +206,40 @@ class TestPortfolioClose:
         assert trade["net_pnl"] == pytest.approx(expected_gross_pnl)  # kostenfrei in diesem Test
         assert trade["exit_reason"] == "target"
         assert trade["is_forced"] is False
+
+    def test_logs_dynamic_threshold_and_sizing_diagnostics(self):
+        """entry_threshold_z/sizing_multiplier/rv_base/rv_low/rv_high muessen im
+        Trade-Log landen (PDF A.2/E) -- vorher nirgends geloggt, siehe Notebook-
+        Diskussion zur Post-hoc-Regime-Analyse."""
+        prices = [{"AAAUSDT": 100.0, "BBBUSDT": 50.0}] * 3
+        portfolio = _make_portfolio(prices)
+        params = BasketParams(capital_per_position=0.1, fee_bps=0.0, slippage_bps=0.0)
+        spread = SpreadDefinition(
+            kind="pairwise", asset_ids=(1, 2), symbols=("AAAUSDT", "BBBUSDT"), weights=(1.0, -0.5),
+            mu=0.0, sigma=1.0,
+            fitted_at=pd.Timestamp("2025-01-01", tz="UTC"), formation_start=pd.Timestamp("2024-12-25", tz="UTC"),
+            diagnostics={"rv_base": 0.02, "rv_low": 0.01, "rv_high": 0.04},
+        )
+        signal = EntrySignal(
+            spread=spread, direction=1, signal_value=3.0, spread_value=0.0, priority=3.0,
+            meta={"entry_threshold_z": 2.3, "sizing_multiplier": 1.75},
+        )
+
+        portfolio.queue_open(
+            signal=signal, basket="Basket 1", snapshot=_FakeSnapshot(), params=params,
+            strategy_name="pairwise_zscore", fill_at_bar_index=1,
+        )
+        portfolio.execute_pending(bar_index=1, timestamp=pd.Timestamp("2025-01-01 00:05", tz="UTC"))
+        position = next(iter(portfolio.open_positions.values()))
+        portfolio.queue_close(position=position, reason="target", fill_at_bar_index=2)
+        portfolio.execute_pending(bar_index=2, timestamp=pd.Timestamp("2025-01-01 00:10", tz="UTC"))
+
+        trade = portfolio.trade_log[0]
+        assert trade["entry_threshold_z"] == pytest.approx(2.3)
+        assert trade["sizing_multiplier"] == pytest.approx(1.75)
+        assert trade["rv_base"] == pytest.approx(0.02)
+        assert trade["rv_low"] == pytest.approx(0.01)
+        assert trade["rv_high"] == pytest.approx(0.04)
 
     def test_close_falls_back_to_last_valid_price_when_fill_price_missing(self):
         prices = [

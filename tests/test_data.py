@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from Src.config import OHLCV_DIR
-from Src.data import available_data_range, full_candle_index, load_ohlcv_panel, resample_ohlcv_panel
+from src.config import OHLCV_DIR
+from src.data import available_data_range, full_candle_index, load_ohlcv_panel, resample_ohlcv_panel
 
 
 def _write_month(tmp_path, year, month, start_day, n_candles):
@@ -49,7 +49,7 @@ def _five_min_panel(n=13):
 class TestResampleOhlcvPanel:
     """Ueberprueft, dass 10/15/30-Min-Kerzen aus den 5-Min-Rohdaten korrekt
     aggregiert werden: open=first, high=max, low=min, close=last,
-    volume=sum je Zielfenster (siehe Src.data._RESAMPLE_AGG_BY_FIELD)."""
+    volume=sum je Zielfenster (siehe src.data._RESAMPLE_AGG_BY_FIELD)."""
 
     def test_15min_aggregation_matches_manual_calculation(self):
         panel = _five_min_panel(n=13)  # close 0..12, letztes 15-Min-Fenster unvollstaendig (nur 1 Kerze: 12)

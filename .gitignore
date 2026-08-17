@@ -37,3 +37,12 @@ data/processed/features/
 # damit die Run-Historie im Repo nachvollziehbar bleibt, ohne die schweren
 # equity_curve/trades-Parquets pro Run mitzupushen.
 data/processed/backtests/*/
+
+# Optuna-Tuning-Storage (regenerable via src/backtest/tuning.py) -- dasselbe
+# Prinzip wie bei den Backtest-Run-Artefakten oben, hier ohne getrackten Index.
+data/processed/tuning/
+
+# Noch nicht fuer den Push vorgesehen (work in progress)
+bachelorarbeit/
+notebooks/BA_visualizations.ipynb
+images/

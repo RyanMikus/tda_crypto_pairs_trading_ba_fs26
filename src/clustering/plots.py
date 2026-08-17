@@ -12,7 +12,7 @@ from scipy.spatial.distance import squareform
 from sklearn.manifold import MDS
 from IPython.display import display, clear_output
 
-from Src.clustering.helpers import HelperFunctions
+from src.clustering.helpers import HelperFunctions
 
 # Manche Umgebungen (z.B. VS Code) erkennen den Default automatisch als
 # zusammengesetzten, "+"-getrennten Wert (z.B. "vscode+notebook"). In dem Fall

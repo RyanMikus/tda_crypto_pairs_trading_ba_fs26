@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from Src.backtest.cliques import CliqueTimeline, TimelineCursor
+from src.backtest.cliques import CliqueTimeline, TimelineCursor
 
 
 class TestCliqueTimelineFromCache:

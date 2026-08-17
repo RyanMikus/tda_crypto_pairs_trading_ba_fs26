@@ -1,10 +1,10 @@
 import pandas as pd
 import pytest
 
-from Src.backtest import metrics as bt_metrics
-from Src.backtest import runs as bt_runs
-from Src.backtest.config import BacktestConfig, BasketParams, DateRange
-from Src.backtest.types import BacktestResult
+from src.backtest import metrics as bt_metrics
+from src.backtest import runs as bt_runs
+from src.backtest.config import BacktestConfig, BasketParams, DateRange
+from src.backtest.types import BacktestResult
 
 
 def _make_result(label, *, entry_z=2.0):

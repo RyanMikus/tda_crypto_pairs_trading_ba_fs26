@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from Src.backtest.types import EntrySignal, Leg, Position
+from src.backtest.types import EntrySignal, Leg, Position
 
 if TYPE_CHECKING:
-    from Src.backtest.cliques import CliqueSnapshot
-    from Src.backtest.config import BasketParams
+    from src.backtest.cliques import CliqueSnapshot
+    from src.backtest.config import BasketParams
 
 FORCED_EXIT_REASONS = {"data_gap", "end_of_backtest"}
 
@@ -217,7 +217,12 @@ class Portfolio:
             fill_prices[sym] = price
 
         equity = self.equity(bar_index)
-        gross_notional = params.capital_per_position * equity
+        # Dynamic Position Sizing (siehe strategy.py::_resolve_entry_threshold_and_sizing):
+        # sizing_multiplier ist 1.0, wenn dynamic_sizing_enabled=False -- unveraendertes
+        # Verhalten fuer bestehende Runs. Der Cap (sizing_multiplier_cap) ist bereits
+        # beim Aufloesen angewendet, hier keine zusaetzliche Begrenzung noetig.
+        sizing_multiplier = signal.meta.get("sizing_multiplier", 1.0)
+        gross_notional = params.capital_per_position * equity * sizing_multiplier
         weights = np.array(definition.weights, dtype=float)
         fractions = dollar_neutral_fractions(weights) if params.dollar_neutralize else np.abs(weights) / np.abs(weights).sum()
 
@@ -242,6 +247,8 @@ class Portfolio:
             entry_death=snapshot.death, entry_lookback_days=snapshot.lookback_days,
             direction=signal.direction, legs=legs, entry_timestamp=ts,
             entry_signal_value=signal.signal_value, entry_spread_value=signal.spread_value,
+            entry_threshold_z=signal.meta.get("entry_threshold_z", params.entry_z),
+            sizing_multiplier=sizing_multiplier,
             gross_notional=gross_notional, entry_equity=equity, entry_cost=entry_cost_total,
         )
 
@@ -324,6 +331,19 @@ class Portfolio:
             "exit_spread": exit_spread_value,
             "entry_z": position.entry_signal_value,
             "exit_z": exit_z,
+            # Dynamic Threshold/Sizing-Diagnostik (PDF A.2/E) -- entry_threshold_z ist der
+            # bei DIESER Position tatsaechlich gueltige, ggf. regimeabhaengig verschobene
+            # Entry-/Exit-Zielwert (position.entry_threshold_z != position.params.entry_z
+            # zeigt, dass das Regime bei Entry NICHT "normal" war); rv_base/rv_low/rv_high
+            # sind die bei Formation berechnete Referenzverteilung (siehe
+            # Src.signals.spread.compute_realized_vol_regime), fuer Post-hoc-Checks, ob
+            # der Regime-Mechanismus ueberhaupt sinnvolle (nicht-degenerierte) Werte
+            # liefert -- vorher nirgends geloggt, siehe Notebook-Diskussion.
+            "entry_threshold_z": position.entry_threshold_z,
+            "sizing_multiplier": position.sizing_multiplier,
+            "rv_base": diag.get("rv_base", np.nan),
+            "rv_low": diag.get("rv_low", np.nan),
+            "rv_high": diag.get("rv_high", np.nan),
             "gross_notional": position.gross_notional,
             "entry_equity": position.entry_equity,
             "gross_pnl": gross_pnl,

@@ -17,8 +17,8 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from Src.backtest.cliques import CliqueSnapshot
-    from Src.backtest.config import BacktestConfig, BasketParams
+    from src.backtest.cliques import CliqueSnapshot
+    from src.backtest.config import BacktestConfig, BasketParams
 
 
 EXIT_REASONS = (
@@ -137,8 +137,24 @@ class Position:
     entry_timestamp: pd.Timestamp
     entry_signal_value: float
     entry_spread_value: float
+    # b, das bei DIESER Position tatsaechlich fuer Entry galt -- bei
+    # dynamic_threshold_enabled=False identisch zu params.entry_z, sonst der
+    # regimeabhaengig angepasste Wert (siehe strategy.py::
+    # _resolve_entry_threshold_and_sizing, ueber EntrySignal.meta gesetzt in
+    # Portfolio._execute_open). Wird vom symmetrischen Exit (check_exit)
+    # als Zielband verwendet, NICHT params.entry_z/position.params.entry_z --
+    # sonst wuerde eine offene Position auf ein Ziel zulaufen, das sich erst
+    # NACH ihrem Entry aus einem geaenderten Regime ergeben hat.
+    entry_threshold_z: float
     gross_notional: float
     entry_equity: float
+    # N_t/N_static aus PDF-Abschnitt E (Dynamic Position Sizing) -- 1.0, wenn
+    # dynamic_sizing_enabled=False. Nur zu Diagnose-/Auswertungszwecken auf der
+    # Position gespeichert (Portfolio._execute_open skaliert gross_notional
+    # bereits direkt aus EntrySignal.meta); ohne dieses Feld liesse sich der
+    # Multiplikator nur indirekt aus gross_notional/(capital_per_position*
+    # entry_equity) zurueckrechnen, siehe Notebook-Diskussion.
+    sizing_multiplier: float = 1.0
     entry_cost: float = 0.0
     bars_held: int = 0
     unrealized_pnl: float = 0.0

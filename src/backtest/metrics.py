@@ -21,10 +21,10 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
-from Src.config import CANDLE_MINUTES
+from src.config import CANDLE_MINUTES
 
 if TYPE_CHECKING:
-    from Src.backtest.config import BacktestConfig
+    from src.backtest.config import BacktestConfig
 
 DAYS_PER_YEAR = 365.0
 

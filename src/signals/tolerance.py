@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import beta as beta_dist
 
-from Src.signals.spread import compute_log_returns, compute_return_spread
+from src.signals.spread import compute_log_returns, compute_return_spread
 
 
 # ============================================================================

@@ -1,10 +1,10 @@
 import pandas as pd
 import pytest
 
-from Src.backtest.config import BacktestConfig, BasketParams, DateRange
-from Src.backtest.engine import BacktestEngine
-from Src.backtest.strategy import StrategyState
-from Src.backtest.types import NO_EXIT
+from src.backtest.config import BacktestConfig, BasketParams, DateRange
+from src.backtest.engine import BacktestEngine
+from src.backtest.strategy import StrategyState
+from src.backtest.types import NO_EXIT
 
 
 class _NoOpStrategy:

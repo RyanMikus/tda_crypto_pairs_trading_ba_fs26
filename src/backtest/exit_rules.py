@@ -17,9 +17,9 @@ from typing import Protocol
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
 
-from Src.backtest.types import BarContext, ExitDecision, NO_EXIT, Position
-from Src.clustering.helpers import HelperFunctions
-from Src.config import candles_per_day  #!#################### GEÄNDERT: war CANDLES_PER_DAY (fix 5-Min)
+from src.backtest.types import BarContext, ExitDecision, NO_EXIT, Position
+from src.clustering.helpers import HelperFunctions
+from src.config import candles_per_day  #!#################### GEÄNDERT: war CANDLES_PER_DAY (fix 5-Min)
 
 
 class ExitRule(Protocol):

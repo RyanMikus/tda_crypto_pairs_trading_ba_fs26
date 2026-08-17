@@ -14,9 +14,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from Src.backtest.cliques import CliqueTimeline
-from Src.backtest.config import BasketParams
-from Src.backtest.types import BarContext, Leg, Position, PriceWindow, SpreadDefinition
+from src.backtest.cliques import CliqueTimeline
+from src.backtest.config import BasketParams
+from src.backtest.types import BarContext, Leg, Position, PriceWindow, SpreadDefinition
 
 SYMBOLS = ["AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT"]
 N_CANDLES = 1600  # ~5.5 Tage bei 5-Min-Kerzen
@@ -124,8 +124,9 @@ def make_spread_definition():
 def make_position(make_spread_definition):
     def _make(
         *, params=None, bars_held=0, missing_price_bars=0, membership_key="mk1", basket="Basket 1", spread=None,
-        direction=1, entry_death=1.0, entry_lookback_days=1,
+        direction=1, entry_death=1.0, entry_lookback_days=1, entry_threshold_z=None,
     ):
+        resolved_params = params or BasketParams()
         spread = spread or make_spread_definition()
         legs = [
             Leg(asset_id=a, symbol=s, weight=w)
@@ -133,12 +134,16 @@ def make_position(make_spread_definition):
         ]
         return Position(
             position_id="pos-1", strategy="pairwise_zscore", basket=basket, spread=spread,
-            params=params or BasketParams(),
+            params=resolved_params,
             membership_key=membership_key, discovery_timestamp=pd.Timestamp("2025-01-01", tz="UTC"),
             entry_death=entry_death, entry_lookback_days=entry_lookback_days,
             direction=direction, legs=legs,
             entry_timestamp=pd.Timestamp("2025-01-01", tz="UTC"),
             entry_signal_value=2.0, entry_spread_value=0.0,
+            # Default = resolved_params.entry_z (Phase-1-Verhalten: statischer
+            # Threshold), explizit ueberschreibbar fuer Tests, die das "bei
+            # Entry eingefroren"-Verhalten pruefen (siehe test_strategy.py).
+            entry_threshold_z=entry_threshold_z if entry_threshold_z is not None else resolved_params.entry_z,
             gross_notional=1000.0, entry_equity=100_000.0,
             bars_held=bars_held, missing_price_bars=missing_price_bars,
         )
@@ -188,7 +193,7 @@ def register_strategy():
     """Registriert eine Test-Strategie in STRATEGY_REGISTRY und entfernt sie
     nach dem Test wieder -- verhindert Verschmutzung des globalen Registry-
     Dicts zwischen Tests."""
-    from Src.backtest.strategy import STRATEGY_REGISTRY
+    from src.backtest.strategy import STRATEGY_REGISTRY
 
     registered = []
 

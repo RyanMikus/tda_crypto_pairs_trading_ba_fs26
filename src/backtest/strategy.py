@@ -18,9 +18,9 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from Src.backtest.cliques import CliqueSnapshot
-from Src.backtest.config import BasketParams
-from Src.backtest.types import BarContext, EntrySignal, ExitDecision, NO_EXIT, Position, SpreadDefinition
+from src.backtest.cliques import CliqueSnapshot
+from src.backtest.config import BasketParams
+from src.backtest.types import BarContext, EntrySignal, ExitDecision, NO_EXIT, Position, SpreadDefinition
 
 
 @dataclass
@@ -51,26 +51,94 @@ class SignalStrategy(Protocol):
     ) -> ExitDecision: ...
 
 
+def _resolve_entry_threshold_and_sizing(
+    definition: SpreadDefinition, ctx: BarContext, params: BasketParams,
+) -> tuple[float, float]:
+    """(entry_threshold_z, sizing_multiplier) fuer EIN Signal/EINE offene
+    Position, JETZT (aktueller Bar). Fallback (params.entry_z, 1.0), wenn
+    beide Features aus sind ODER die Regime-Diagnostik fehlt (z.B. Warm-up,
+    Datenluecke im regime_window bei Formation) ODER das aktuelle sigma_t
+    nicht berechenbar ist -- Dynamic Threshold/Sizing degradiert dann
+    stillschweigend zum alten statischen Verhalten, statt den Trade zu
+    verwerfen.
+
+    Dynamic Threshold (PDF A.2) und Dynamic Sizing (PDF E) sind bewusst EIN
+    Codepfad: beide haengen an derselben live berechneten sigma_S,t^RV, damit
+    es nur EINE Quelle fuer "aktuelle Spread-Volatilitaet" gibt statt zwei
+    potenziell auseinanderlaufender (siehe Modul-Docstring von
+    src.signals.spread zu compute_realized_vol_regime/compute_spread_return_rv).
+    """
+    if not params.dynamic_threshold_enabled and not params.dynamic_sizing_enabled:
+        return params.entry_z, 1.0
+
+    diag = definition.diagnostics
+    rv_base = diag.get("rv_base")
+    rv_low = diag.get("rv_low")
+    rv_high = diag.get("rv_high")
+    if rv_base is None or rv_low is None or rv_high is None:
+        return params.entry_z, 1.0
+
+    from src.signals import spread as sp
+
+    m = params.vol_regime_lookback_candles
+    price_window = ctx.prices.history(definition.symbols, m + 1, field="close")
+    if price_window.isna().any().any():
+        return params.entry_z, 1.0
+    rv_t = sp.compute_spread_return_rv(price_window, definition.weights)
+    if rv_t is None:
+        return params.entry_z, 1.0
+
+    entry_threshold = params.entry_z
+    if params.dynamic_threshold_enabled:
+        if rv_t <= rv_low:
+            entry_threshold = max(params.entry_z - params.entry_z_delta, 0.1)
+        elif rv_t >= rv_high:
+            entry_threshold = params.entry_z + params.entry_z_delta
+
+    sizing_multiplier = 1.0
+    if params.dynamic_sizing_enabled:
+        sizing_multiplier = min(rv_base / rv_t, params.sizing_multiplier_cap)
+
+    return entry_threshold, sizing_multiplier
+
+
 class BaseSpreadZScoreStrategy(ABC):
     """Z-Score-Entry/Exit, geteilt von Pairwise- und Cluster-Strategie."""
 
     name: str = "base_spread_zscore"
 
     def required_history_candles(self, params: BasketParams) -> int:
-        return max(params.formation_window_candles, params.bollinger_window_candles)
+        needed = max(params.formation_window_candles, params.bollinger_window_candles)
+        if params.dynamic_threshold_enabled or params.dynamic_sizing_enabled:
+            # regime_window (siehe on_snapshot) braucht N+m Kerzen VOR dem
+            # ersten handelbaren Snapshot, damit compute_realized_vol_regime
+            # dort nicht bloss mit None zurueckkommt.
+            needed = max(needed, params.vol_regime_percentile_window_candles + params.vol_regime_lookback_candles)
+        return needed
 
     @abstractmethod
     def build_definitions(
         self, *, snapshot: CliqueSnapshot, window: pd.DataFrame, params: BasketParams,
+        regime_window: pd.DataFrame | None = None,
     ) -> tuple[list[SpreadDefinition], list[dict]]:
         """window: Preis-DataFrame (formation_window_candles x symbols),
-        Ende <= aktuelle Bar (siehe on_snapshot)."""
+        Ende <= aktuelle Bar (siehe on_snapshot). regime_window: laengeres
+        Preis-DataFrame (vol_regime_percentile_window_candles +
+        vol_regime_lookback_candles Kerzen) fuer die Vola-Regime-Referenz
+        (siehe src.signals.spread.compute_realized_vol_regime), nur gesetzt
+        wenn dynamic_threshold_enabled/dynamic_sizing_enabled aktiv sind."""
 
     def on_snapshot(
         self, *, snapshot: CliqueSnapshot, ctx: BarContext, params: BasketParams,
     ) -> StrategyState:
         window = ctx.prices.history(snapshot.symbols, params.formation_window_candles, field="close")
-        definitions, rejected = self.build_definitions(snapshot=snapshot, window=window, params=params)
+        regime_window = None
+        if params.dynamic_threshold_enabled or params.dynamic_sizing_enabled:
+            regime_needed = params.vol_regime_percentile_window_candles + params.vol_regime_lookback_candles
+            regime_window = ctx.prices.history(snapshot.symbols, regime_needed, field="close")
+        definitions, rejected = self.build_definitions(
+            snapshot=snapshot, window=window, params=params, regime_window=regime_window,
+        )
         for definition in definitions:
             # Clique-Diagnostik aus dem Snapshot in die SpreadDefinition durchreichen,
             # damit sie später im Trade-Log landet (trades.parquet: persistence,
@@ -111,7 +179,8 @@ class BaseSpreadZScoreStrategy(ABC):
             z = definition.rolling_zscore(price_window)
             if z is None:
                 continue
-            if abs(z) < params.entry_z:
+            entry_threshold, sizing_multiplier = _resolve_entry_threshold_and_sizing(definition, ctx, params)
+            if abs(z) < entry_threshold:
                 continue
             if params.stop_z is not None and abs(z) >= params.stop_z:
                 # Signal ist per Definition schon ungueltig (stop_z ist die
@@ -128,6 +197,7 @@ class BaseSpreadZScoreStrategy(ABC):
                 signal_value=z,
                 spread_value=definition.spread_value(log_prices),
                 priority=abs(z),
+                meta={"entry_threshold_z": entry_threshold, "sizing_multiplier": sizing_multiplier},
             ))
         return signals
 
@@ -141,6 +211,22 @@ class BaseSpreadZScoreStrategy(ABC):
             return NO_EXIT
         z = position.spread.rolling_zscore(price_window)
         if z is None:
+            return NO_EXIT
+        if params.symmetric_exit:
+            # Opposite-Band-Exit statt Exit nahe der Mitte (siehe
+            # BasketParams.symmetric_exit-Docstring): b ist der bei DIESER
+            # Position tatsaechlich gueltige entry_z, aus
+            # position.entry_threshold_z (bei Entry eingefroren, siehe
+            # types.py-Docstring) statt aus dem aktuellen params/ctx --
+            # relevant, sobald entry_z regimeabhaengig variiert (dynamische
+            # Thresholds), damit eine offene Position nicht auf ein Ziel
+            # zulaeuft, das erst NACH ihrem Entry entstanden ist. Short
+            # (direction=-1, Entry bei z~+b) haelt bis z<=-b, Long
+            # (direction=+1, Entry bei z~-b) haelt bis z>=+b -- beides
+            # zusammengefasst: direction*z >= b (siehe Herleitung im PR).
+            b = position.entry_threshold_z
+            if position.direction * z >= b:
+                return ExitDecision(True, "target", signal_value=z)
             return NO_EXIT
         if abs(z) <= params.exit_z:
             return ExitDecision(True, "target", signal_value=z)
@@ -168,8 +254,9 @@ class PairwiseZScoreStrategy(BaseSpreadZScoreStrategy):
 
     def build_definitions(
         self, *, snapshot: CliqueSnapshot, window: pd.DataFrame, params: BasketParams,
+        regime_window: pd.DataFrame | None = None,
     ) -> tuple[list[SpreadDefinition], list[dict]]:
-        from Src.signals import spread as sp
+        from src.signals import spread as sp
 
         symbols = list(snapshot.symbols)
         sym_to_asset_id = dict(zip(snapshot.symbols, snapshot.asset_ids))
@@ -213,6 +300,19 @@ class PairwiseZScoreStrategy(BaseSpreadZScoreStrategy):
             hedge_ratio = diag["hedge_ratio"]
             spread_series = sp.compute_price_spread(window, t1, t2, hedge_ratio)
             mu, sigma = sp.spread_zscore_params(spread_series)
+            if regime_window is not None:
+                # rv_base/rv_low/rv_high EINMAL pro Snapshot (wie ADF/Half-Life),
+                # nicht pro Bar -- siehe src.signals.spread.compute_realized_vol_regime.
+                # None (zu wenig Historie/Datenluecken im regime_window) faellt
+                # in _resolve_entry_threshold_and_sizing auf statisches entry_z zurueck.
+                regime_stats = sp.compute_realized_vol_regime(
+                    regime_window[[t1, t2]], (1.0, -hedge_ratio),
+                    rv_lookback_candles=params.vol_regime_lookback_candles,
+                    low_percentile=params.vol_regime_low_percentile,
+                    high_percentile=params.vol_regime_high_percentile,
+                )
+                if regime_stats is not None:
+                    diag = {**diag, **regime_stats}
             definitions.append(SpreadDefinition(
                 kind="pairwise",
                 asset_ids=(sym_to_asset_id[t1], sym_to_asset_id[t2]),
@@ -237,8 +337,9 @@ class ClusterSpreadStrategy(BaseSpreadZScoreStrategy):
 
     def build_definitions(
         self, *, snapshot: CliqueSnapshot, window: pd.DataFrame, params: BasketParams,
+        regime_window: pd.DataFrame | None = None,
     ) -> tuple[list[SpreadDefinition], list[dict]]:
-        from Src.signals import spread as sp
+        from src.signals import spread as sp
 
         symbols = list(snapshot.symbols)
         sym_to_asset_id = dict(zip(snapshot.symbols, snapshot.asset_ids))
@@ -266,6 +367,16 @@ class ClusterSpreadStrategy(BaseSpreadZScoreStrategy):
         ok, why = _quality_filter(diag, params)
         if not ok:
             return [], [{"reason": why, **diag}]
+
+        if regime_window is not None:
+            regime_stats = sp.compute_realized_vol_regime(
+                regime_window[list(weights.index)], weights.to_numpy(),
+                rv_lookback_candles=params.vol_regime_lookback_candles,
+                low_percentile=params.vol_regime_low_percentile,
+                high_percentile=params.vol_regime_high_percentile,
+            )
+            if regime_stats is not None:
+                diag = {**diag, **regime_stats}
 
         mu, sigma = sp.spread_zscore_params(cluster_spread_series)
         definition = SpreadDefinition(
@@ -336,8 +447,8 @@ class GarchWilksToleranceStrategy:
     def on_snapshot(
         self, *, snapshot: CliqueSnapshot, ctx: BarContext, params: BasketParams,
     ) -> StrategyState:
-        from Src.signals import spread as sp
-        from Src.signals.garch import compute_garch_volatility
+        from src.signals import spread as sp
+        from src.signals.garch import compute_garch_volatility
 
         symbols = list(snapshot.symbols)
         sym_to_asset_id = dict(zip(snapshot.symbols, snapshot.asset_ids))
@@ -408,8 +519,8 @@ class GarchWilksToleranceStrategy:
         wilks_lookback_candles+1 Bars (braucht +1, weil compute_log_returns
         eine Beobachtung durch die Differenzierung verliert). None, falls
         nicht genug Historie ohne Datenluecken vorliegt."""
-        from Src.signals import spread as sp
-        from Src.signals.garch import garch_sigma_path
+        from src.signals import spread as sp
+        from src.signals.garch import garch_sigma_path
 
         n_needed = params.wilks_lookback_candles + 1
         if ctx.bar_index + 1 < n_needed:
@@ -428,7 +539,7 @@ class GarchWilksToleranceStrategy:
             return return_spread / sigma.replace(0.0, np.nan)
 
     def _wilks_limits(self, xmax_history: pd.Series, params: BasketParams) -> tuple[float, float] | None:
-        from Src.signals.tolerance import wilks_tolerance_limits
+        from src.signals.tolerance import wilks_tolerance_limits
 
         clean = xmax_history.dropna().to_numpy()
         if len(clean) < 3:

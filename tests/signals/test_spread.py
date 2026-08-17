@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from Src.signals import spread as sp
+from src.signals import spread as sp
 
 
 class TestHedgeRatioAndSpread:
@@ -126,3 +126,49 @@ class TestJohansenAndClusterSpread:
         spread = sp.build_cluster_spread(df, weights)
         expected = 0.6 * np.log(df["A"]) - 0.4 * np.log(df["B"])
         np.testing.assert_allclose(spread.to_numpy(), expected.to_numpy())
+
+
+class TestRealizedVolOfSpreadReturns:
+    """sigma_S,t^RV -- Bausteine fuer Dynamic Volatility-Adjusted Thresholds
+    (docs/project/"Suggested methods...pdf" A.2) und Dynamic Position Sizing (E)."""
+
+    def test_compute_spread_return_rv_matches_manual_std(self):
+        returns = np.array([0.01, -0.01, 0.02, -0.02, 0.01])
+        log_a = np.concatenate([[0.0], np.cumsum(returns)])
+        df = pd.DataFrame({"A": np.exp(log_a), "B": np.ones(len(log_a))})
+        rv = sp.compute_spread_return_rv(df, (1.0, 0.0))
+        assert rv == pytest.approx(np.std(returns, ddof=0))
+
+    def test_compute_spread_return_rv_none_for_constant_spread(self):
+        df = pd.DataFrame({"A": [1.0, 1.0, 1.0], "B": [1.0, 1.0, 1.0]})
+        assert sp.compute_spread_return_rv(df, (1.0, -1.0)) is None
+
+    def test_compute_spread_return_rv_none_with_fewer_than_two_returns(self):
+        df = pd.DataFrame({"A": [1.0], "B": [1.0]})
+        assert sp.compute_spread_return_rv(df, (1.0, -1.0)) is None
+
+    def test_compute_realized_vol_regime_matches_manual_rolling_calc(self):
+        rng = np.random.default_rng(3)
+        m = 5
+        returns = rng.normal(0, 0.01, 40)
+        log_a = np.concatenate([[0.0], np.cumsum(returns)])
+        df = pd.DataFrame({"A": np.exp(log_a), "B": np.ones(len(log_a))})
+
+        result = sp.compute_realized_vol_regime(
+            df, (1.0, 0.0), rv_lookback_candles=m, low_percentile=20.0, high_percentile=80.0,
+        )
+
+        rv_series = pd.Series(returns).rolling(m, min_periods=m).std(ddof=0).dropna()
+        assert result["rv_base"] == pytest.approx(rv_series.median())
+        assert result["rv_low"] == pytest.approx(rv_series.quantile(0.20))
+        assert result["rv_high"] == pytest.approx(rv_series.quantile(0.80))
+        assert result["rv_low"] <= result["rv_base"] <= result["rv_high"]
+
+    def test_compute_realized_vol_regime_none_when_too_few_points(self):
+        """Braucht >= 2*m gueltige RV-Punkte -- weniger ist zu duenn fuer eine
+        sinnvolle Perzentil-Schaetzung (z.B. waehrend des Warm-ups)."""
+        m = 5
+        returns = np.random.default_rng(0).normal(0, 0.01, 2 * m - 1)
+        log_a = np.concatenate([[0.0], np.cumsum(returns)])
+        df = pd.DataFrame({"A": np.exp(log_a), "B": np.ones(len(log_a))})
+        assert sp.compute_realized_vol_regime(df, (1.0, 0.0), rv_lookback_candles=m) is None

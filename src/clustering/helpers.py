@@ -5,7 +5,7 @@ from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 import warnings
 
-from Src.config import (
+from src.config import (
     DATE_COL, TIMESTAMP_COL, CLOSE_COL, ASSET_ID_COL,
 )
 

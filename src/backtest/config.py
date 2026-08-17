@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
-from Src.config import CANDLE_MINUTES
+from src.config import CANDLE_MINUTES
 
 _TIMEDELTA_AUTO = "auto"
 
@@ -64,6 +64,40 @@ class BasketParams:
     # --- Signal ---
     entry_z: float = 2.0
     exit_z: float = 0.5
+    # Opposite-Band-Exit (docs/project/"Suggested methods...pdf", Abschnitt A.1):
+    # statt bei Rueckkehr zur Mitte (|z| <= exit_z) zu schliessen, wird bis zum
+    # GEGENUEBERLIEGENDEN Band gehalten -- Short (Entry bei z=+entry_z) haelt bis
+    # z <= -entry_z, Long (Entry bei z=-entry_z) haelt bis z >= +entry_z (siehe
+    # BaseSpreadZScoreStrategy.check_exit). exit_z wird in diesem Modus ignoriert.
+    # Default False, damit bestehende Runs/Tests unveraendert bleiben.
+    symmetric_exit: bool = False
+
+    # --- Dynamic Volatility-Adjusted Thresholds (PDF A.2) / Dynamic Position
+    # Sizing (PDF E) -- bewusst EIN Parameterblock, weil beide Features auf
+    # derselben rollierenden Realized-Vol-des-Spread-Returns (sigma_S,t^RV)
+    # aufsetzen (siehe src/signals/spread.py::compute_spread_return_rv/
+    # compute_realized_vol_regime und strategy.py::_resolve_entry_threshold_and_sizing).
+    # Beide Flags einzeln schaltbar, da man z.B. nur Sizing ohne Threshold-
+    # Anpassung testen kann. Defaults False, bestehende Runs unveraendert.
+    dynamic_threshold_enabled: bool = False
+    dynamic_sizing_enabled: bool = False
+    # m: Fenster der rollierenden RV-Schaetzung (live UND fuer die Perzentil-
+    # Referenzreihe). Default 288 = 24h bei 5-Min-Kerzen (siehe Notebook-
+    # Diskussion zur m-Sensitivitaet: 12h/24h/36h/48h).
+    vol_regime_lookback_candles: int = 288
+    # N: Laenge der Referenzverteilung fuer die Perzentil-Grenzen (Q_low/
+    # Q_high), N >> m. Default 60 Tage (17280 Kerzen) -- fix, nicht Teil der
+    # Optuna-Suche (theoriegeleiteter Fensterparameter, siehe tuning.py-
+    # Modul-Docstring).
+    vol_regime_percentile_window_candles: int = 60 * 288
+    vol_regime_low_percentile: float = 20.0
+    vol_regime_high_percentile: float = 80.0
+    # Δb: additive Verschiebung von entry_z (und, ueber symmetric_exit, damit
+    # auch des Exit-Ziels) in Low-/High-Vol-Regimes. PDF-Beispiel: b=2, Δb=0.3.
+    entry_z_delta: float = 0.3
+    # Deckelt N_t/N_static nach oben (siehe PDF-Formel E) -- verhindert eine
+    # Notional-Explosion, wenn sigma_S,t^RV nahe 0 liegt (sehr ruhiger Markt).
+    sizing_multiplier_cap: float = 3.0
 
     # --- Break-Conditions (siehe exit_rules.py) ---
     stop_z: float | None = 4.0
@@ -103,7 +137,7 @@ class BasketParams:
     min_johansen_relations: int = 1
 
     #!#################### NEU: Parameter fuer GarchWilksToleranceStrategy
-    #!#################### (Src/backtest/strategy.py) -- Gegenstueck zu
+    #!#################### (src/backtest/strategy.py) -- Gegenstueck zu
     #!#################### entry_z/exit_z bei BaseSpreadZScoreStrategy, siehe
     #!#################### dortigen Docstring fuer die Wilks-Entry/Exit-Logik.
     wilks_lookback_candles: int = 288  # rollierendes Fenster fuer die Xmax-Historie der Wilks-Grenzen
