@@ -2,15 +2,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from Src.backtest.config import BasketParams, DateRange
-from Src.backtest.tuning import (
+from src.backtest.config import BasketParams, DateRange
+from src.backtest.tuning import (
     TuningResult, build_basket_overrides, generate_walkforward_folds,
     tune_all_baskets, tune_basket_params,
 )
-from Src.backtest.tuning import _is_range_spec, _suggest_param, save_tuning_results  #!#################### NEU
-from Src.backtest.tuning import load_all_tuning_results  #!#################### NEU
-from Src.backtest.tuning import DASHBOARD_PORTS, _port_is_open, ensure_dashboard_running  #!#################### NEU
-from Src.backtest.tuning import fold_days_for_n_windows  #!#################### NEU
+from src.backtest.tuning import _is_range_spec, _suggest_param, save_tuning_results  #!#################### NEU
+from src.backtest.tuning import load_all_tuning_results  #!#################### NEU
+from src.backtest.tuning import DASHBOARD_PORTS, _port_is_open, ensure_dashboard_running  #!#################### NEU
+from src.backtest.tuning import fold_days_for_n_windows  #!#################### NEU
 
 
 class TestGenerateWalkforwardFolds:
@@ -54,7 +54,7 @@ class TestFoldDaysForNWindows:
         for n_windows in (3, 6, 10, 20):
             fold_days = fold_days_for_n_windows(cal, n_windows=n_windows, base_params=params, strategy_name="pairwise_zscore")
             import math
-            from Src.config import candles_per_day
+            from src.config import candles_per_day
             warmup_days = math.ceil(params.formation_window_candles / candles_per_day(5))
             folds = generate_walkforward_folds(cal, fold_days=fold_days, warmup_days=warmup_days)
             assert len(folds) == n_windows
@@ -128,7 +128,7 @@ class TestTuneBasketParamsSmoke:
 #!#################### NEU
 class TestGenericSearchSpace:
     """search_space (statt der frueher fest verdrahteten entry_z/exit_z/
-    max_holding_half_life_multiplier) -- Src/backtest/strategy.py:
+    max_holding_half_life_multiplier) -- src/backtest/strategy.py:
     GarchWilksToleranceStrategy braucht z.B. wilks_p_content/
     wilks_confidence statt entry_z/exit_z, siehe Modul-Docstring."""
 
@@ -251,7 +251,7 @@ class TestTuneAllBasketsAndOverrides:
             calls.append((basket, seed))
             return TuningResult(basket=basket, study=_FakeStudy(), trials_df=pd.DataFrame(), best_params={}, folds=[])
 
-        monkeypatch.setattr("Src.backtest.tuning.tune_basket_params", _fake_tune_basket_params)
+        monkeypatch.setattr("src.backtest.tuning.tune_basket_params", _fake_tune_basket_params)
 
         idx = synthetic_panel["close"].index
         calibration_range = DateRange(idx[0], idx[0] + pd.Timedelta(days=4))
@@ -384,7 +384,7 @@ class TestOptunaDashboard:
     notebooks/03_Tradeing/tuning_common.py (Modul jetzt geloescht)."""
 
     def test_dashboard_ports_cover_all_strategies(self):
-        from Src.backtest.strategy import STRATEGY_REGISTRY
+        from src.backtest.strategy import STRATEGY_REGISTRY
 
         assert set(DASHBOARD_PORTS) == set(STRATEGY_REGISTRY)
 

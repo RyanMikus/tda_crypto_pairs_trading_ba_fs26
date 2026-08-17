@@ -249,3 +249,80 @@ def build_cluster_spread(price_df: pd.DataFrame, weights: pd.Series) -> pd.Serie
 def spread_zscore_params(spread: pd.Series) -> tuple[float, float]:
     """(mu, sigma) des Formationsfensters -- werden bei Entry eingefroren."""
     return float(spread.mean()), float(spread.std(ddof=0))
+
+
+def _weighted_log_spread(price_df: pd.DataFrame, weights) -> np.ndarray:
+    log_prices = np.log(price_df.to_numpy())
+    return log_prices @ np.asarray(weights, dtype=float)
+
+
+def compute_spread_return_rv(price_df: pd.DataFrame, weights) -> float | None:
+    """sigma_S,t^RV (docs/project/"Suggested methods...pdf", Abschnitt A.2):
+    realisierte Volatilitaet der SPREAD-RETURNS (nicht der Preise) ueber das
+    GESAMTE uebergebene price_df-Fenster -- der live, pro Bar berechnete
+    Gegenpart zu rv_base/rv_low/rv_high aus compute_realized_vol_regime()
+    (die auf einem viel laengeren Fenster einmal pro Snapshot berechnet
+    werden). price_df hat typischerweise vol_regime_lookback_candles + 1
+    Kerzen (braucht +1 wegen der Differenzierung zu Returns).
+
+    Returns:
+        Populations-Std (ddof=0, konsistent mit SpreadDefinition.rolling_zscore)
+        der Spread-Returns, oder None falls weniger als 2 Returns vorliegen
+        oder das Ergebnis nicht endlich/positiv ist (z.B. konstanter Spread).
+    """
+    spread = _weighted_log_spread(price_df, weights)
+    returns = np.diff(spread)
+    if len(returns) < 2:
+        return None
+    sigma = float(np.std(returns, ddof=0))
+    if not np.isfinite(sigma) or sigma <= 0:
+        return None
+    return sigma
+
+
+def compute_realized_vol_regime(
+    price_df: pd.DataFrame,
+    weights,
+    *,
+    rv_lookback_candles: int,
+    low_percentile: float = 20.0,
+    high_percentile: float = 80.0,
+) -> dict | None:
+    """Referenzverteilung fuer die Vola-Regime-Klassifikation (PDF Abschnitt
+    A.2) UND die Baseline fuer Dynamic Position Sizing (PDF Abschnitt E) --
+    beide aus DERSELBEN rollierenden RV-Reihe, damit es nur eine Quelle fuer
+    "was ist normale Spread-Volatilitaet fuer dieses Paar" gibt.
+
+    Rollierende Std der Spread-Returns ueber rv_lookback_candles Kerzen (m),
+    dann Median/Perzentile dieser RV-Reihe ueber den GESAMTEN uebergebenen
+    price_df-Zeitraum (N, typischerweise vol_regime_percentile_window_candles
+    + rv_lookback_candles Kerzen). Gedacht, EINMAL pro Clique-Snapshot
+    berechnet zu werden (wie ADF/Half-Life), nicht pro Bar -- die
+    Perzentilgrenzen sollen eine stabile, langsam wandernde Referenz sein,
+    nur das aktuelle sigma_t (compute_spread_return_rv) ist live pro Bar.
+
+    Args:
+        price_df: Preise (KEINE Returns) ueber den vollen Referenzzeitraum,
+            Spalten in DERSELBEN Reihenfolge wie weights.
+        weights: Spread-Gewichte, z.B. SpreadDefinition.weights.
+        rv_lookback_candles: m, Fenster der rollierenden RV-Schaetzung.
+        low_percentile/high_percentile: Q_low/Q_high fuer die Regime-Grenzen
+            (PDF-Beispiel: 20/80).
+
+    Returns:
+        {"rv_base": Median, "rv_low": Q_low, "rv_high": Q_high} der
+        rollierenden RV-Reihe, oder None falls nach dropna() weniger als
+        2 * rv_lookback_candles RV-Punkte uebrig bleiben (zu duenne Basis fuer
+        eine sinnvolle Perzentil-Schaetzung -- z.B. Warm-up oder Datenluecken).
+    """
+    spread = _weighted_log_spread(price_df, weights)
+    returns = pd.Series(np.diff(spread))
+    rv_series = returns.rolling(rv_lookback_candles, min_periods=rv_lookback_candles).std(ddof=0)
+    valid = rv_series.dropna()
+    if len(valid) < 2 * rv_lookback_candles:
+        return None
+    return {
+        "rv_base": float(valid.median()),
+        "rv_low": float(valid.quantile(low_percentile / 100.0)),
+        "rv_high": float(valid.quantile(high_percentile / 100.0)),
+    }

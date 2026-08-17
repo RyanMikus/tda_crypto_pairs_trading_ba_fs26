@@ -31,7 +31,7 @@ importiert -- analog zur Aufteilung tolerance.py/pairtrading_engine.py.
 
 import pandas as pd
 
-from Src.signals.garch import compute_garch_volatility
+from src.signals.garch import compute_garch_volatility
 
 
 def compute_garch_adjusted_spreads(

@@ -10,11 +10,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from Src.backtest import metrics as bt_metrics
-from Src.backtest.types import BacktestResult
+from src.backtest import metrics as bt_metrics
+from src.backtest.types import BacktestResult
 
 if TYPE_CHECKING:
-    from Src.backtest.config import BasketParams
+    from src.backtest.config import BasketParams
 
 
 def plot_equity_and_drawdown(

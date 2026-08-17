@@ -29,7 +29,7 @@ importiert -- analog zur Aufteilung tolerance.py/pairtrading_engine.py.
 import numpy as np
 import pandas as pd
 
-from Src.signals.spread import compute_price_spread, estimate_hedge_ratio
+from src.signals.spread import compute_price_spread, estimate_hedge_ratio
 
 
 # ============================================================================

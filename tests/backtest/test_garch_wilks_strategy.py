@@ -1,4 +1,4 @@
-"""Tests für GarchWilksToleranceStrategy (Src/backtest/strategy.py) --
+"""Tests für GarchWilksToleranceStrategy (src/backtest/strategy.py) --
 GARCH(1,1)/Wilks-Toleranzintervall-Portierung von
 notebooks/03_Tradeing/garch_pairtrading_engine.py auf die aktuelle Engine.
 """
@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from Src.backtest.config import BasketParams
-from Src.backtest.strategy import GarchWilksToleranceStrategy, StrategyState, build_strategy
-from Src.backtest.types import PriceWindow
+from src.backtest.config import BasketParams
+from src.backtest.strategy import GarchWilksToleranceStrategy, StrategyState, build_strategy
+from src.backtest.types import PriceWindow
 
 
 def _garch_price_window(n=600, omega=1e-5, alpha=0.1, beta=0.85, seed=3, nu=6, hedge_ratio=0.5):

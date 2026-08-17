@@ -29,7 +29,7 @@ from typing import Literal
 
 import pandas as pd
 
-from Src.config import CLIQUES_DIR
+from src.config import CLIQUES_DIR
 
 
 def _membership_key(asset_ids) -> str:

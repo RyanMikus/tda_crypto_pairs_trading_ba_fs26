@@ -40,11 +40,11 @@ from typing import Union
 import numpy as np
 import pandas as pd
 
-from Src.backtest.config import BacktestConfig, BasketParams, DateRange
-from Src.backtest.config import _BASKET_PARAM_FIELDS  #!#################### NEU: Feld-Validierung für search_space
-from Src.backtest.engine import BacktestEngine
-from Src.backtest.strategy import build_strategy
-from Src.config import CANDLE_MINUTES, TUNING_DIR, candles_per_day  #!#################### GEÄNDERT: war CANDLES_PER_DAY
+from src.backtest.config import BacktestConfig, BasketParams, DateRange
+from src.backtest.config import _BASKET_PARAM_FIELDS  #!#################### NEU: Feld-Validierung für search_space
+from src.backtest.engine import BacktestEngine
+from src.backtest.strategy import build_strategy
+from src.config import CANDLE_MINUTES, TUNING_DIR, candles_per_day  #!#################### GEÄNDERT: war CANDLES_PER_DAY
 
 
 #!#################### NEU: generischer Suchraum statt der drei fest
@@ -479,15 +479,34 @@ def tune_basket_params(
         #!####################
         return objective_value
 
-    sampler = optuna.samplers.TPESampler(seed=seed)
     if use_persistent_storage:
         resolved_storage_path = Path(storage_path) if storage_path is not None else TUNING_DIR / "optuna_walkforward.db"
         resolved_storage_path.parent.mkdir(parents=True, exist_ok=True)
+        storage_url = f"sqlite:///{resolved_storage_path.resolve()}"
+        resolved_study_name = study_name or basket
+
+        #!#################### NEU: Seed um die Anzahl bereits vorhandener Trials
+        #!#################### verschieben, WENN eine Study mit diesem Namen schon
+        #!#################### existiert -- TPESampler(seed=seed) startet sonst bei
+        #!#################### jedem Aufruf/Prozess den Zufallsstrom neu bei null,
+        #!#################### obwohl die Study-Historie korrekt fortgesetzt wird.
+        #!#################### Folge (beobachtet): die ersten paar neuen Trials nach
+        #!#################### einem Resume wiederholen EXAKT dieselben Parameter/
+        #!#################### Objective-Werte wie die ersten Trials des vorherigen
+        #!#################### Aufrufs -- verschwendete Rechenzeit, keine echte
+        #!#################### zusaetzliche Exploration.
+        n_existing_trials = 0
+        if resolved_storage_path.exists() and resolved_study_name in optuna.get_all_study_names(storage=storage_url):
+            n_existing_trials = len(optuna.load_study(study_name=resolved_study_name, storage=storage_url).trials)
+        sampler = optuna.samplers.TPESampler(seed=seed + n_existing_trials)
+        #!####################
+
         study = optuna.create_study(
-            study_name=study_name or basket, storage=f"sqlite:///{resolved_storage_path.resolve()}",
+            study_name=resolved_study_name, storage=storage_url,
             sampler=sampler, direction="maximize", load_if_exists=True,
         )
     else:
+        sampler = optuna.samplers.TPESampler(seed=seed)
         study = optuna.create_study(direction="maximize", sampler=sampler)
 
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
@@ -543,7 +562,7 @@ def build_basket_overrides(results: dict[str, TuningResult]) -> dict[str, dict]:
 #!#################### NEU: save_tuning_results -- fehlte bisher komplett
 #!#################### (05_tuning.ipynb ruft bt_tuning.save_tuning_results(...)
 #!#################### auf, das brach vorher mit AttributeError ab, siehe
-#!#################### PR-Diskussion). Analog zu Src/backtest/runs.py::save_run:
+#!#################### PR-Diskussion). Analog zu src/backtest/runs.py::save_run:
 #!#################### ein Ordner pro Lauf unter TUNING_DIR, best_params.json +
 #!#################### trials.parquet PRO BASKET, damit die Walk-Forward-Suche
 #!#################### selbst nachvollziehbar bleibt (nicht nur ihr Endergebnis).

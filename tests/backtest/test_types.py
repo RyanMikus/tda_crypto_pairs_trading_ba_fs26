@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from Src.backtest.types import PriceWindow, SpreadDefinition
+from src.backtest.types import PriceWindow, SpreadDefinition
 
 
 def _make_price_window(bar_index=10, n_bars=20, symbols=("AAAUSDT", "BBBUSDT")):

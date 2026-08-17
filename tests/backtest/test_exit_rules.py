@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from Src.backtest.config import BasketParams
-from Src.backtest.exit_rules import (
+from src.backtest.config import BasketParams
+from src.backtest.exit_rules import (
     CliqueBreakRule,
     DataGapRule,
     DEFAULT_EXIT_CHAIN,
