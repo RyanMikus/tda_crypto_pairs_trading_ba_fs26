@@ -101,14 +101,12 @@ class BasketParams:
 
     # --- Break-Conditions (siehe exit_rules.py) ---
     stop_z: float | None = 4.0
-    # Zeitlicher Exit skaliert PRO POSITION mit der bei Entry geschätzten
-    # Half-Life (position.spread.diagnostics["half_life_periods"]) statt einer
-    # festen Kerzenzahl -- Daumenregel nach Chan: Haltedauer als Vielfaches der
-    # Half-Life, sonst brechen v.a. Paare mit langsamer Reversion regelmässig
-    # am Timeout ab, bevor sie konvergieren (siehe Notebook-Test mit fixem
-    # 10h-Timeout: 37% Zwangsschliessungen vor Reversion). Fehlt half_life_periods
-    # (z.B. isoliert konstruierte Positionen in Tests), greift TimeoutRule nie.
-    max_holding_half_life_multiplier: float = 4.0
+    # Absoluter Kalendertage-Hard-Cap fuer die Haltedauer (siehe
+    # exit_rules.MaxHoldingDaysRule) -- ersetzt die fruehere, rein multiplikative
+    # Half-Life-basierte TimeoutRule (max_holding_half_life_multiplier), die
+    # entfernt wurde, weil eine variable Pro-Position-Haltedauer sich nicht sinnvoll
+    # als feste Tageszahl vorgeben liess. None deaktiviert den Hard-Cap.
+    max_holding_days: float | None = 4.0
     exit_on_clique_break: bool = True  # Mitgliedschaftswechsel beim nächsten Snapshot
     max_data_gap_candles: int = 6
     # Topologischer Struktur-Break-Detektor (Single-Linkage/fcluster bei ε*-δ, siehe
@@ -136,17 +134,7 @@ class BasketParams:
     max_half_life_candles: float = 288 * 2
     min_johansen_relations: int = 1
 
-    #!#################### NEU: Parameter fuer GarchWilksToleranceStrategy
-    #!#################### (src/backtest/strategy.py) -- Gegenstueck zu
-    #!#################### entry_z/exit_z bei BaseSpreadZScoreStrategy, siehe
-    #!#################### dortigen Docstring fuer die Wilks-Entry/Exit-Logik.
-    wilks_lookback_candles: int = 288  # rollierendes Fenster fuer die Xmax-Historie der Wilks-Grenzen
-    wilks_p_content: float = 0.95
-    wilks_confidence: float = 0.95
-    garch_dist: str = "t"
-    garch_max_iter: int = 500
-    #!####################
-
+    
     # --- Positionslimits ---
     min_holding_candles: int = 1
     max_concurrent_positions: int = 3

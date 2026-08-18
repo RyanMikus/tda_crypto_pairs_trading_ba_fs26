@@ -45,6 +45,7 @@ def candles_per_day(candle_minutes: int) -> float:
     return 24 * 60 / candle_minutes
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def candles_per_year(candle_minutes: int) -> float:
     """Kerzen pro Jahr für eine beliebige Kerzengrösse (24h/365 Krypto-Handel)."""
     return 365 * candles_per_day(candle_minutes)
@@ -57,7 +58,7 @@ def candles_per_year(candle_minutes: int) -> float:
 #!#################### kosten (fee_bps=0), als Referenzpunkt/obere Schranke fuer
 #!#################### die Rendite, unabhaengig von Gebuehren-/Slippage-Annahmen.
 #!#################### Slippage muss separat auf 0 gesetzt werden (siehe
-#!#################### notebooks/04_backtest/07_quick_tuning.ipynb), da sie ein
+#!#################### notebooks/04_backtest/08_tune_dynamic_vol.ipynb), da sie ein
 #!#################### eigener BasketParams-Parameter ist (slippage_bps), nicht
 #!#################### Teil dieses Fee-Preset-Dicts.
 BINANCE_FEE_PRESETS_BPS = {

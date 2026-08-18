@@ -40,7 +40,12 @@ data/processed/backtests/*/
 
 # Optuna-Tuning-Storage (regenerable via src/backtest/tuning.py) -- dasselbe
 # Prinzip wie bei den Backtest-Run-Artefakten oben, hier ohne getrackten Index.
-data/processed/tuning/
+# README.md bleibt Ausnahme (erklaert Herkunft/Format, kein regenerierbares Artefakt) --
+# data/processed/tuning/* (statt .../tuning/) noetig, damit Git ueberhaupt in den Ordner
+# hineinschaut und die !-Ausnahme unten greifen kann (ein reines Verzeichnis-Pattern
+# wuerde den Ordner komplett blocken, Datei-Ausnahmen darin waeren wirkungslos).
+data/processed/tuning/*
+!data/processed/tuning/README.md
 
 # Noch nicht fuer den Push vorgesehen (work in progress)
 bachelorarbeit/

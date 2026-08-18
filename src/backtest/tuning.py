@@ -10,8 +10,8 @@ nicht verändert.
 
 Theoriegeleitete Filterparameter vs. tunbare Signalparameter (dieselbe
 Trennung wie im alten Tuner, siehe dortiger Modul-Docstring, "Data-Snooping-
-Bias" bei Ernie Chan): NUR entry_z, exit_z und max_holding_half_life_multiplier
-sind Teil der Optuna-Suche. stop_z sowie alle Filter-/Fensterparameter
+Bias" bei Ernie Chan): NUR entry_z und exit_z sind Teil der Optuna-Suche.
+stop_z sowie alle Filter-/Fensterparameter
 (bollinger_window_candles, formation_window_candles, min/max_half_life_candles,
 require_adf, adf_alpha, max_candidate_pairs, pair_prefilter_top_n) bleiben FIX
 aus dem übergebenen base_params -- das sind statistische Konventionen bzw.
@@ -32,7 +32,7 @@ Teile von calibration_range zurückgibt, nie darüber hinaus.
 from __future__ import annotations
 
 import math
-import time  #!#################### NEU: fuer progress=True ETA-Berechnung
+import time 
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Union
@@ -41,20 +41,13 @@ import numpy as np
 import pandas as pd
 
 from src.backtest.config import BacktestConfig, BasketParams, DateRange
-from src.backtest.config import _BASKET_PARAM_FIELDS  #!#################### NEU: Feld-Validierung für search_space
+from src.backtest.config import _BASKET_PARAM_FIELDS  
 from src.backtest.engine import BacktestEngine
 from src.backtest.strategy import build_strategy
-from src.config import CANDLE_MINUTES, TUNING_DIR, candles_per_day  #!#################### GEÄNDERT: war CANDLES_PER_DAY
+from src.config import CANDLE_MINUTES, TUNING_DIR, candles_per_day 
 
 
-#!#################### NEU: generischer Suchraum statt der drei fest
-#!#################### verdrahteten Parameter (entry_z/exit_z/
-#!#################### max_holding_half_life_multiplier) -- noetig, damit
-#!#################### auch Strategien mit anderen Stellschrauben (z.B.
-#!#################### GarchWilksToleranceStrategy: wilks_p_content/
-#!#################### wilks_confidence/garch_dist) ueber dieselbe
-#!#################### Walk-Forward-Suche getunt werden koennen, statt eine
-#!#################### zweite Tuning-Funktion pro Strategie zu brauchen.
+
 FloatRange = tuple[float, float]
 IntRange = tuple[int, int]
 CategoricalChoices = list  # list[str | float | int]
@@ -72,7 +65,6 @@ Bereich, ist aber eine Auswahl) -- siehe _is_range_spec."""
 DEFAULT_SEARCH_SPACE: dict[str, SearchSpec] = {
     "entry_z": (1.0, 4.0),
     "exit_z": (0.0, 4.0),  # oberes Ende wird pro Trial auf entry_z-0.1 gekappt, siehe _suggest_param
-    "max_holding_half_life_multiplier": (1.0, 8.0),
 }
 """Rückwärtskompatibler Default -- identisch zum vorherigen, fest
 verdrahteten Suchraum (pairwise_zscore/cluster_johansen)."""
@@ -110,7 +102,34 @@ def _suggest_param(trial: "optuna.Trial", name: str, spec: SearchSpec, *, resolv
         return trial.suggest_float(name, float(low), float(high))
 
     return trial.suggest_categorical(name, list(spec))
-#!####################
+
+
+
+def _required_history_candles_worst_case(
+    *, strategy, base_params: BasketParams, search_space: dict[str, SearchSpec] | None,
+) -> int:
+    """required_history_candles(base_params), aber mit jedem im search_space
+    genannten Feld auf sein Maximum gesetzt (Bereichs-Obergrenze bei tuple,
+    max() der Optionen bei list) -- deckt jeden Wert ab, den _suggest_param
+    fuer dieses Feld tatsaechlich sampeln kann. Felder ausserhalb des
+    search_space bleiben unveraendert aus base_params (dort FIX per
+    Definition)."""
+    if not search_space:
+        return strategy.required_history_candles(base_params)
+
+    overrides: dict[str, float | int] = {}
+    for name, spec in search_space.items():
+        if name not in _BASKET_PARAM_FIELDS:
+            continue
+        if _is_range_spec(spec):
+            _low, high = spec
+        else:
+            high = max(spec)
+        overrides[name] = high
+
+    worst_case_params = replace(base_params, **overrides)
+    return strategy.required_history_candles(worst_case_params)
+
 
 
 def generate_walkforward_folds(
@@ -161,17 +180,11 @@ def generate_walkforward_folds(
     return folds
 
 
-#!#################### NEU: n_windows -> fold_days-Rueckrechnung, analog zum
-#!#################### alten tuning_common.auto_walkforward_layout (dort:
-#!#################### n_windows war die einzige Nutzer-Stellschraube,
-#!#################### train_days/val_days/step_days/embargo_days wurden
-#!#################### daraus abgeleitet). Die neue Engine kennt nur
-#!#################### fold_days direkt -- diese Funktion schliesst die
-#!#################### Luecke, ohne generate_walkforward_folds selbst
-#!#################### anzufassen.
+
 def fold_days_for_n_windows(
     calibration_range: DateRange, *, n_windows: int, base_params: BasketParams,
     strategy_name: str = "pairwise_zscore", candle_minutes: int = CANDLE_MINUTES,
+    search_space: dict[str, SearchSpec] | None = None, 
 ) -> int:
     """Rechnet die gewuenschte Fenster-ANZAHL (n_windows) in die von
     generate_walkforward_folds/tune_basket_params erwartete Fenster-GROESSE
@@ -188,12 +201,19 @@ def fold_days_for_n_windows(
         n_windows: gewuenschte Anzahl Walk-Forward-Fenster (>= 1).
         base_params, strategy_name, candle_minutes: siehe tune_basket_params
             -- bestimmen warmup_days.
+        search_space: falls uebergeben (derselbe search_space wie beim
+            zugehoerigen tune_basket_params-Aufruf), wird warmup_days aus dem
+            WORST CASE ueber alle darin moeglichen Kandidaten abgeleitet
+            (siehe _required_history_candles_worst_case) -- noetig, falls
+            formation_window_candles/vol_regime_percentile_window_candles/
+            vol_regime_lookback_candles selbst gesucht werden, sonst kann ein
+            Trial mehr Vorlauf brauchen, als hier eingeplant wurde.
 
     Returns:
         fold_days (>= 1), das bei generate_walkforward_folds moeglichst nah
         an n_windows tatsaechliche Fenster ergibt (kann wegen Rundung und
         Restlaenge leicht abweichen -- Ergebnis mit generate_walkforward_folds
-        gegenpruefen, siehe 07_quick_tuning.ipynb).
+        gegenpruefen, siehe notebooks/04_backtest/08_tune_dynamic_vol.ipynb).
 
     Raises:
         ValueError: falls n_windows < 1, oder falls selbst n_windows=1 kein
@@ -204,7 +224,9 @@ def fold_days_for_n_windows(
         raise ValueError(f"n_windows muss >= 1 sein, erhalten: {n_windows}")
 
     strategy = build_strategy(strategy_name)
-    required_candles = strategy.required_history_candles(base_params)
+    required_candles = _required_history_candles_worst_case(
+        strategy=strategy, base_params=base_params, search_space=search_space,
+    )
     warmup_days = math.ceil(required_candles / candles_per_day(candle_minutes))
 
     range_days = (calibration_range.end - calibration_range.start).days + 1
@@ -218,7 +240,7 @@ def fold_days_for_n_windows(
             f"Fenster -- calibration_range vergrössern oder n_windows verkleinern."
         )
     return fold_days
-#!####################
+
 
 
 def _slice_panel(panel: dict[str, pd.DataFrame], start: pd.Timestamp, end: pd.Timestamp) -> dict[str, pd.DataFrame]:
@@ -240,7 +262,7 @@ def _run_fold(
     strategy_name: str,
     initial_capital: float,
     warmup_days: int,
-    candle_minutes: int = CANDLE_MINUTES,  #!#################### NEU
+    candle_minutes: int = CANDLE_MINUTES, 
 ) -> tuple[float, int]:
     """Läuft EINEN Fold für EINEN Basket mit einem Kandidaten-Parametersatz,
     gibt (total_return, n_trades) zurück (0.0/0 falls keine Trades/leere
@@ -258,7 +280,7 @@ def _run_fold(
         strategy_name=strategy_name,
         default_params=params,
         initial_capital=initial_capital,
-        candle_minutes=candle_minutes,  #!#################### NEU
+        candle_minutes=candle_minutes, 
     )
     engine = BacktestEngine(config=config, panel=sliced, timeline=timeline)
     result = engine.run()
@@ -309,34 +331,17 @@ def tune_basket_params(
     study_name: str | None = None,
     storage_path: Path | str | None = None,
     use_persistent_storage: bool = True,
-    candle_minutes: int = CANDLE_MINUTES,  #!#################### NEU
-    search_space: dict[str, SearchSpec] | None = None,  #!#################### NEU
-    progress: bool = False,  #!#################### NEU
+    candle_minutes: int = CANDLE_MINUTES,   
+    search_space: dict[str, SearchSpec] | None = None,   
+    progress: bool = False,  
 ) -> TuningResult:
-    """Optuna/TPE-Suche über search_space (Default: entry_z/exit_z/
-    max_holding_half_life_multiplier, siehe DEFAULT_SEARCH_SPACE) für EINEN
+    """Optuna/TPE-Suche über search_space (Default: entry_z/exit_z, siehe
+    DEFAULT_SEARCH_SPACE) für EINEN
     Basket, Zielgrösse = _objective_metric über alle Walk-Forward-Folds
     innerhalb calibration_range (siehe Modul-Docstring für die
     Isolations-Begründung).
 
-    #!#################### NEU: search_space ist ein {BasketParams-Feldname:
-    #!#################### SearchSpec}-Dict -- JEDER BasketParams-Feldname
-    #!#################### ist zulässig (nicht nur die drei ursprünglich fest
-    #!#################### verdrahteten), damit auch Strategien mit anderen
-    #!#################### Stellschrauben (z.B. GarchWilksToleranceStrategy:
-    #!#################### wilks_p_content/wilks_confidence/garch_dist) über
-    #!#################### dieselbe Funktion tunbar sind. Alle NICHT im
-    #!#################### search_space genannten Felder bleiben FIX aus
-    #!#################### base_params (siehe _quality_filter-Trennung
-    #!#################### theoriegeleitet vs. tunbar im Modul-Docstring --
-    #!#################### die Trennung bleibt Aufrufer-Verantwortung, nicht
-    #!#################### mehr hart in dieser Funktion verdrahtet). Die
-    #!#################### spezielle exit_z<entry_z-Kopplung (siehe
-    #!#################### _suggest_param) greift nur, wenn BEIDE Namen im
-    #!#################### search_space stehen -- Default-Verhalten bleibt
-    #!#################### dadurch 1:1 identisch zum vorherigen Code.
-    #!####################
-
+    
     min_trades_per_fold (Analog zu SCREEN_MIN_SIGNALS im alten Tuner):
     mean(fold_returns) - std(fold_returns) allein belohnt PERVERS
     Kandidaten, die kaum handeln -- viele Folds mit ~0 Trades ziehen die
@@ -353,17 +358,7 @@ def tune_basket_params(
     zu beginnen -- wichtig, da n_trials hier die Anzahl NEUER Trials in
     diesem Aufruf ist, nicht die Gesamtzahl der Study.
 
-    #!#################### NEU: progress=True druckt pro Trial einen
-    #!#################### Statusblock (Trial-Nr./ETA, gesuchte Parameter,
-    #!#################### pro Fold n_trades+return) -- portiert aus dem
-    #!#################### alten notebooks/03_Tradeing/quick_tune_garch.py
-    #!#################### (Modul jetzt gelöscht). GARCH-Wilks-Trials
-    #!#################### (GARCH-Fit pro Paar/Snapshot) können mehrere
-    #!#################### Minuten pro Trial dauern -- ohne progress=True
-    #!#################### bleibt tune_basket_params bis zum Ende STUMM
-    #!#################### (show_progress_bar=False), was in der Praxis wie
-    #!#################### Hängen aussieht, obwohl es nur lange läuft.
-    #!####################
+
 
     Raises:
         ValueError: falls calibration_range nach Abzug der Warm-up-Tage
@@ -376,20 +371,21 @@ def tune_basket_params(
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    #!#################### GEÄNDERT: war eine feste Zuweisung ohne Parameter --
-    #!#################### search_space faellt auf DEFAULT_SEARCH_SPACE zurueck,
-    #!#################### damit bestehende Aufrufer unveraendert funktionieren.
+
     resolved_search_space = search_space if search_space is not None else DEFAULT_SEARCH_SPACE
     unknown = set(resolved_search_space) - _BASKET_PARAM_FIELDS
     if unknown:
         raise ValueError(f"search_space enthält keine BasketParams-Felder: {sorted(unknown)}")
-    #!####################
+    
 
     strategy = build_strategy(strategy_name)
-    required_candles = strategy.required_history_candles(base_params)
-    #!#################### GEÄNDERT: war required_candles / CANDLES_PER_DAY (fix 5-Min)
+
+    required_candles = _required_history_candles_worst_case(
+        strategy=strategy, base_params=base_params, search_space=resolved_search_space,
+    )
+    
     warmup_days = math.ceil(required_candles / candles_per_day(candle_minutes))
-    #!####################
+    
 
     folds = generate_walkforward_folds(calibration_range, fold_days=fold_days, warmup_days=warmup_days)
     if not folds:
@@ -400,25 +396,16 @@ def tune_basket_params(
         )
 
     trial_log: list[dict] = []
-    #!#################### NEU: Fortschrittszaehler/Zeitmessung fuer progress=True
     _n_trials_seen = 0
     _t_start = time.perf_counter()
-    #!####################
 
-    #!#################### GEÄNDERT: war ein fest verdrahteter 3-Parameter-Block
-    #!#################### (entry_z/exit_z/max_holding_half_life_multiplier) --
-    #!#################### jetzt eine generische Schleife über resolved_search_space.
     def objective(trial: "optuna.Trial") -> float:
-        nonlocal _n_trials_seen  #!#################### NEU
+        nonlocal _n_trials_seen   
         suggested: dict = {}
         for name, spec in resolved_search_space.items():
             suggested[name] = _suggest_param(trial, name, spec, resolved=suggested)
 
-        #!#################### NEU: Trial-Statuszeile VOR der teuren Fold-
-        #!#################### Simulation, damit auch ein einzelner, sehr
-        #!#################### langsamer Trial (z.B. GARCH-Fits) sichtbar
-        #!#################### als "gestartet" erkennbar ist, nicht erst nach
-        #!#################### Abschluss.
+    
         _n_trials_seen += 1
         if progress:
             elapsed = time.perf_counter() - _t_start
@@ -427,7 +414,7 @@ def tune_basket_params(
                 eta = elapsed / (_n_trials_seen - 1) * (n_trials - (_n_trials_seen - 1))
                 eta_str = f" | ~{eta:.0f}s verbleibend"
             print(f"[Trial {_n_trials_seen}/{n_trials}] (Study-Trial-Nr. {trial.number}) {suggested}{eta_str}")
-        #!####################
+        
 
         candidate = replace(base_params, **suggested)
         fold_results = []
@@ -438,24 +425,18 @@ def tune_basket_params(
                 candle_minutes=candle_minutes,
             )
             fold_results.append((fold_return, fold_trades))
-            #!#################### NEU: pro-Fold-Statuszeile -- macht bei
-            #!#################### teuren Strategien (garch_wilks) sichtbar,
-            #!#################### DASS und WIE WEIT ein laufender Trial
-            #!#################### voranschreitet, statt komplett stumm zu
-            #!#################### bleiben bis der ganze Trial fertig ist.
+            
             if progress:
                 print(f"    Fold {fi}/{len(folds)} [{fold.start.date()}, {fold.end.date()}]: "
                       f"{fold_trades} Trades, return={fold_return:.4f}")
-            #!####################
+            
         fold_returns = [r for r, _ in fold_results]
         total_trades = sum(n for _, n in fold_results)
         min_required_trades = min_trades_per_fold * len(folds)
 
-        #!#################### GEÄNDERT: **suggested statt der drei fest
-        #!#################### benannten Variablen -- deckt beliebige
-        #!#################### search_space-Parameter im trials_df ab.
+        
         if total_trades < min_required_trades:
-            if progress:  #!#################### NEU
+            if progress:   
                 print(f"  -> PRUNED (nur {total_trades} Trades, {min_required_trades:.0f} noetig)\n")
             trial_log.append({
                 "trial_number": trial.number, **suggested,
@@ -467,7 +448,7 @@ def tune_basket_params(
 
         objective_value = _objective_metric(fold_returns)
         arr = np.array(fold_returns, dtype=float)
-        if progress:  #!#################### NEU
+        if progress:   
             print(f"  -> ABGESCHLOSSEN: objective={objective_value:.4f}\n")
         trial_log.append({
             "trial_number": trial.number, **suggested,
@@ -476,7 +457,7 @@ def tune_basket_params(
             "mean_fold_return": float(arr.mean()), "std_fold_return": float(arr.std(ddof=0)),
             "n_folds": len(folds),
         })
-        #!####################
+        
         return objective_value
 
     if use_persistent_storage:
@@ -485,21 +466,12 @@ def tune_basket_params(
         storage_url = f"sqlite:///{resolved_storage_path.resolve()}"
         resolved_study_name = study_name or basket
 
-        #!#################### NEU: Seed um die Anzahl bereits vorhandener Trials
-        #!#################### verschieben, WENN eine Study mit diesem Namen schon
-        #!#################### existiert -- TPESampler(seed=seed) startet sonst bei
-        #!#################### jedem Aufruf/Prozess den Zufallsstrom neu bei null,
-        #!#################### obwohl die Study-Historie korrekt fortgesetzt wird.
-        #!#################### Folge (beobachtet): die ersten paar neuen Trials nach
-        #!#################### einem Resume wiederholen EXAKT dieselben Parameter/
-        #!#################### Objective-Werte wie die ersten Trials des vorherigen
-        #!#################### Aufrufs -- verschwendete Rechenzeit, keine echte
-        #!#################### zusaetzliche Exploration.
+        
         n_existing_trials = 0
         if resolved_storage_path.exists() and resolved_study_name in optuna.get_all_study_names(storage=storage_url):
             n_existing_trials = len(optuna.load_study(study_name=resolved_study_name, storage=storage_url).trials)
         sampler = optuna.samplers.TPESampler(seed=seed + n_existing_trials)
-        #!####################
+        
 
         study = optuna.create_study(
             study_name=resolved_study_name, storage=storage_url,
@@ -526,6 +498,7 @@ def tune_basket_params(
     )
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def tune_all_baskets(
     *, baskets: tuple[str, ...], panel: dict[str, pd.DataFrame], timeline, base_params: BasketParams,
     calibration_range: DateRange, seed: int = 42, **kwargs,
@@ -554,18 +527,13 @@ def tune_all_baskets(
     return results
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def build_basket_overrides(results: dict[str, TuningResult]) -> dict[str, dict]:
     """Extrahiert {basket: best_params} -- direkt als BacktestConfig.basket_overrides einsetzbar."""
     return {basket: dict(result.best_params) for basket, result in results.items()}
 
 
-#!#################### NEU: save_tuning_results -- fehlte bisher komplett
-#!#################### (05_tuning.ipynb ruft bt_tuning.save_tuning_results(...)
-#!#################### auf, das brach vorher mit AttributeError ab, siehe
-#!#################### PR-Diskussion). Analog zu src/backtest/runs.py::save_run:
-#!#################### ein Ordner pro Lauf unter TUNING_DIR, best_params.json +
-#!#################### trials.parquet PRO BASKET, damit die Walk-Forward-Suche
-#!#################### selbst nachvollziehbar bleibt (nicht nur ihr Endergebnis).
+
 def _tuning_slug(label: str) -> str:
     import re
     s = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
@@ -574,27 +542,14 @@ def _tuning_slug(label: str) -> str:
 
 def save_tuning_results(
     results: dict[str, TuningResult], *, label: str, tuning_dir: Path = TUNING_DIR,
-    candle_minutes: int = CANDLE_MINUTES,  #!#################### NEU
-    fee_preset: str | None = None,  #!#################### NEU
+    candle_minutes: int = CANDLE_MINUTES,   
+    fee_preset: str | None = None,  
 ) -> Path:
     """Speichert best_params.json (alle Baskets) + trials_<basket>.parquet
     (je Basket) unter tuning_dir/<run_id>/. run_id = Zeitstempel + Slug(label),
     analog zu runs.save_run.
 
-    #!#################### NEU: candle_minutes UND fee_preset werden in JEDEM
-    #!#################### Basket-Eintrag von best_params.json mitgespeichert
-    #!#################### (nicht nur einmal auf Top-Level) -- macht spaetere
-    #!#################### Kerzenlaengen-/Kostenmodell-Vergleiche moeglich
-    #!#################### (z.B. "zero_cost" vs. "standard"), ohne den
-    #!#################### run_id/Dateinamen parsen zu muessen: einfach alle
-    #!#################### best_params.json unter tuning_dir einlesen und
-    #!#################### gruppieren/filtern (siehe
-    #!#################### notebooks/04_backtest/07_quick_tuning.ipynb,
-    #!#################### Abschnitt "Kerzenlaengen-Vergleich"). fee_preset
-    #!#################### ist rein INFORMATIV (kein BasketParams-Feld) --
-    #!#################### die tatsaechlichen Kosten stecken in base_params
-    #!#################### selbst, nicht in best_params.
-    #!####################
+  
 
     Returns:
         Pfad zum Lauf-Ordner.
@@ -612,8 +567,8 @@ def save_tuning_results(
             "best_objective": float(result.study.best_value),
             "n_trials": len(result.trials_df),
             "n_folds": len(result.folds),
-            "candle_minutes": candle_minutes,  #!#################### NEU
-            "fee_preset": fee_preset,  #!#################### NEU
+            "candle_minutes": candle_minutes,   
+            "fee_preset": fee_preset,  
         }
         for basket, result in results.items()
     }
@@ -627,12 +582,7 @@ def save_tuning_results(
     return run_dir
 
 
-#!#################### NEU: laedt best_params.json aus ALLEN gespeicherten
-#!#################### Tuning-Laeufen und baut eine flache Vergleichstabelle
-#!#################### (ein Zeile pro Basket x Kerzenlaenge x Run) -- macht
-#!#################### den Vergleich "welche Kerzenlaenge war fuer Basket X
-#!#################### am besten" moeglich, ohne jeden run_id-Ordner von Hand
-#!#################### zu oeffnen.
+
 def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
     """Liest jede best_params.json unter tuning_dir/<run_id>/ und baut eine
     lange Tabelle (eine Zeile pro Basket-Eintrag pro Run) mit den Spalten
@@ -672,14 +622,10 @@ def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
                 "best_params": entry.get("best_params"),
             })
     return pd.DataFrame(rows, columns=columns)
-#!####################
 
 
-#!#################### NEU: Optuna-Dashboard-Autostart, portiert aus
-#!#################### notebooks/03_Tradeing/tuning_common.py::
-#!#################### ensure_dashboard_running (Modul jetzt geloescht) --
-#!#################### unveraendertes Verhalten, nur der Ports-Default ist
-#!#################### jetzt an die aktuellen Strategienamen angepasst.
+
+
 DASHBOARD_PORTS: dict[str, int] = {"pairwise_zscore": 8080, "cluster_johansen": 8081, "garch_wilks": 8082}
 """Ein eigener Port je Strategie, damit mehrere Dashboards gleichzeitig
 laufen koennen (siehe ensure_dashboard_running)."""
@@ -705,7 +651,7 @@ def ensure_dashboard_running(
     falls unter host:port noch nichts laeuft, und oeffnet den Browser-Tab.
 
     Gedacht, um vor jedem Tuning-Lauf aufgerufen zu werden (siehe
-    notebooks/04_backtest/07_quick_tuning.ipynb-Button-Callbacks) --
+    notebooks/04_backtest/08_tune_dynamic_vol.ipynb-Button-Callbacks) --
     idempotent: ein bereits laufendes Dashboard (egal ob von uns oder
     manuell gestartet) wird nicht doppelt gestartet, der Browser-Tab wird
     trotzdem geoeffnet, damit der Nutzer bei jedem Klick wieder direkt zum
@@ -772,4 +718,4 @@ def ensure_dashboard_running(
         webbrowser.open(url)
 
     return url
-#!####################
+

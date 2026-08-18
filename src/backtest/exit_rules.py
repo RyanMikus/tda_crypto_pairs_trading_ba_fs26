@@ -19,7 +19,7 @@ from scipy.spatial.distance import squareform
 
 from src.backtest.types import BarContext, ExitDecision, NO_EXIT, Position
 from src.clustering.helpers import HelperFunctions
-from src.config import candles_per_day  #!#################### GEÄNDERT: war CANDLES_PER_DAY (fix 5-Min)
+from src.config import candles_per_day  
 
 
 class ExitRule(Protocol):
@@ -72,20 +72,20 @@ class StopLossRule:
 
 
 @dataclass
-class TimeoutRule:
-    """Zwangs-Exit nach max_holding_half_life_multiplier * Half-Life dieser
-    Position (siehe BasketParams.max_holding_half_life_multiplier) -- pro
-    Paar unterschiedlich, statt einer festen Kerzenzahl für alle Positionen.
-    Fehlende/unendliche half_life_periods (z.B. Testfixtures ohne
-    Diagnostik) deaktivieren die Regel für diese Position, statt fälschlich
-    sofort zu triggern."""
+class MaxHoldingDaysRule:
+    """Zwangs-Exit nach BasketParams.max_holding_days (absoluter Kalendertage-
+    Hard-Cap) -- ersetzt die fruehere, half-life-relative TimeoutRule
+    (max_holding_half_life_multiplier * Half-Life pro Position), die entfernt
+    wurde, weil eine variable Pro-Position-Haltedauer sich nicht sinnvoll als
+    feste Tageszahl vorgeben liess. None deaktiviert die Regel."""
 
-    reason: str = "timeout"
+    reason: str = "max_holding_days"
 
     def check(self, position: Position, ctx: BarContext) -> ExitDecision:
-        half_life = position.spread.diagnostics.get("half_life_periods", float("inf"))
-        max_holding = ctx.params.max_holding_half_life_multiplier * half_life
-        if position.bars_held >= max_holding:
+        if ctx.params.max_holding_days is None:
+            return NO_EXIT
+        max_holding_candles = ctx.params.max_holding_days * candles_per_day(ctx.candle_minutes)
+        if position.bars_held >= max_holding_candles:
             return ExitDecision(True, self.reason)
         return NO_EXIT
 
@@ -134,13 +134,12 @@ class TopologicalBreakRule:
     def check(self, position: Position, ctx: BarContext) -> ExitDecision:
         if not ctx.params.topo_break_enabled:
             return NO_EXIT
-        #!#################### GEÄNDERT: war position.entry_lookback_days * CANDLES_PER_DAY
-        #!#################### (fix 5-Min-Kerzen) -- rechnet jetzt mit der tatsächlichen
-        #!#################### Kerzengrösse dieses Runs (ctx.candle_minutes).
+
+    
         window_candles = ctx.params.topo_break_window_candles or round(
             position.entry_lookback_days * candles_per_day(ctx.candle_minutes)
         )
-        #!####################
+        
         if ctx.bar_index < window_candles - 1:
             return NO_EXIT  # zu wenig Historie -- kein Fehler, einfach (noch) nicht prüfbar
         if len(position.symbols) < 2:
@@ -173,7 +172,7 @@ DEFAULT_EXIT_CHAIN: list[ExitRule] = [
     DataGapRule(),
     StopLossRule(),
     TopologicalBreakRule(),
-    TimeoutRule(),
+    MaxHoldingDaysRule(),
     CliqueBreakRule(),
 ]
 """Reihenfolge ist bewusst: Risiko-/Datenqualitäts-Regeln zuerst, dann die

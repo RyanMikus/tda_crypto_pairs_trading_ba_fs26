@@ -208,6 +208,7 @@ def metrics_by_basket(trades: pd.DataFrame, config: "BacktestConfig") -> pd.Data
     return pd.DataFrame(rows).set_index("basket")
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def metrics_by_exit_reason(trades: pd.DataFrame) -> pd.DataFrame:
     if trades.empty:
         return pd.DataFrame()

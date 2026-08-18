@@ -36,13 +36,24 @@ Konvention, damit Runs untereinander vergleichbar bleiben:
    denselben Bausteinen wie `04_run_comparison.ipynb`. Funktionales Pendant
    zum alten `notebooks/03_Tradeing/strategy_comparison.ipynb`, hier auf der
    aktuellen Engine statt der alten `pairtrading_engine.py`-Familie.
-7. `07_quick_tuning.ipynb` bedient `Src.backtest.tuning.tune_basket_params`
-   über ein ipywidgets-Panel pro Strategie (Checkbox "tunen?" + Fix-/
-   Bereichsfeld pro Parameter, siehe `Src.backtest.tuning.SearchSpec`).
-   Funktionales Pendant zum alten `notebooks/03_Tradeing/quick_tuning.ipynb`,
-   hier über den generischen `search_space`-Parameter statt dreier
-   getrennter Tuner-Module (`quick_tune_ewma.py`/`quick_tune_bollinger.py`/
-   `quick_tune_garch.py`).
+7. `08_tune_dynamic_vol.ipynb` bedient `src.backtest.tuning.tune_basket_params`
+   für `pairwise_zscore` mit `symmetric_exit`/`dynamic_threshold_enabled`/
+   `dynamic_sizing_enabled` fest an (siehe docs/project/"Suggested methods für
+   improving trading performance.pdf" A.1/A.2/E) sowohl über eine automatische
+   Alle-Baskets-Suche (Abschnitt 4) als auch über ein zusätzliches
+   ipywidgets-Panel für einzelne Baskets (Abschnitt 4b, Checkbox "tunen" +
+   Fix-/Bereichsfeld pro Parameter, siehe `src.backtest.tuning.SearchSpec`) --
+   inkl. Checkbox, um automatisch alle Kerzenlängen (5/10/15/30/60/240 min)
+   nacheinander durchzutunen.
+8. `09_tuning_overview.ipynb` liest **alle** gespeicherten Tuning-Läufe aus
+   `08` (`src.backtest.tuning.load_all_tuning_results`) und führt pro
+   Basket×Kerzenlänge-Kombination einen vollständigen Backtest über den
+   **gesamten** Zeitraum aus, geteilt in Test (`CALIBRATION_RANGE`,
+   in-sample bzgl. Parameterwahl) und Validierung (`BACKTEST_RANGE`, echtes
+   Out-of-Sample) -- inkl. Overfitting-Check (Sharpe Test vs. Validierung),
+   Basket-/Kerzenlängen-Vergleich und mehreren Performance-Grafiken. Jede
+   Kombination wird als zwei separate Runs gespeichert (Punkt 4,
+   Label-Suffix `-test`/`-validation`).
 
 ## Look-Ahead-Guards
 

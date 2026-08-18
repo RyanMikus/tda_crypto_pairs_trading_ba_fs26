@@ -11,6 +11,8 @@ from src.backtest.tuning import _is_range_spec, _suggest_param, save_tuning_resu
 from src.backtest.tuning import load_all_tuning_results  #!#################### NEU
 from src.backtest.tuning import DASHBOARD_PORTS, _port_is_open, ensure_dashboard_running  #!#################### NEU
 from src.backtest.tuning import fold_days_for_n_windows  #!#################### NEU
+from src.backtest.tuning import _required_history_candles_worst_case  #!#################### NEU
+from src.backtest.strategy import build_strategy  #!#################### NEU
 
 
 class TestGenerateWalkforwardFolds:
@@ -68,6 +70,86 @@ class TestFoldDaysForNWindows:
         cal = DateRange(pd.Timestamp("2024-07-23", tz="UTC"), pd.Timestamp("2026-02-26", tz="UTC"))
         with pytest.raises(ValueError, match="n_windows muss >= 1"):
             fold_days_for_n_windows(cal, n_windows=0, base_params=self._params(), strategy_name="pairwise_zscore")
+
+    def test_search_space_widens_warmup_below_default(self):
+        """Steht formation_window_candles selbst im search_space, muss die
+        Warm-up-Schaetzung dessen Bereichs-OBERGRENZE beruecksichtigen -- ein
+        groesserer search_space-Bereich darf fold_days nie GROESSER machen als
+        ohne search_space (mehr Warm-up -> weniger Resttage fuer Folds)."""
+        cal = DateRange(pd.Timestamp("2024-07-23", tz="UTC"), pd.Timestamp("2026-02-26", tz="UTC"))
+        params = self._params()
+        fold_days_without = fold_days_for_n_windows(cal, n_windows=3, base_params=params, strategy_name="pairwise_zscore")
+        fold_days_with = fold_days_for_n_windows(
+            cal, n_windows=3, base_params=params, strategy_name="pairwise_zscore",
+            search_space={"formation_window_candles": (288, 288 * 60)},  # Obergrenze weit ueber params-Fixwert
+        )
+        assert fold_days_with <= fold_days_without
+#!####################
+
+
+#!#################### NEU
+class TestRequiredHistoryCandlesWorstCase:
+    """_required_history_candles_worst_case -- Regressionstest fuer den Bug,
+    bei dem ein Optuna-Trial formation_window_candles/vol_regime_* groesser
+    sampeln konnte als base_params vorsah, weil warmup_days/die Panel-
+    Slice-Grenze pro Fold vorher NUR aus base_params (nicht aus dem
+    tatsaechlichen search_space-Wertebereich) berechnet wurde -- fuehrte zum
+    Warm-up-Guard-Crash (ValueError, G7) mitten in study.optimize()."""
+
+    def test_no_search_space_matches_base_params_only(self):
+        strategy = build_strategy("pairwise_zscore")
+        params = BasketParams(formation_window_candles=2016)
+        assert _required_history_candles_worst_case(
+            strategy=strategy, base_params=params, search_space=None,
+        ) == strategy.required_history_candles(params)
+
+    def test_range_spec_uses_upper_bound(self):
+        strategy = build_strategy("pairwise_zscore")
+        params = BasketParams(formation_window_candles=2016)
+        worst = _required_history_candles_worst_case(
+            strategy=strategy, base_params=params,
+            search_space={"formation_window_candles": (500, 9000)},
+        )
+        assert worst == 9000  # Obergrenze, NICHT der base_params-Fixwert 2016
+
+    def test_dynamic_vol_fields_are_summed_at_worst_case(self):
+        """Reproduziert exakt den gemeldeten Fall: dynamic_threshold_enabled/
+        dynamic_sizing_enabled ziehen vol_regime_percentile_window_candles +
+        vol_regime_lookback_candles heran (siehe
+        BaseSpreadZScoreStrategy.required_history_candles) -- beide im
+        search_space -> Summe der jeweiligen Obergrenzen, nicht der
+        base_params-Fixwerte."""
+        strategy = build_strategy("pairwise_zscore")
+        params = BasketParams(
+            dynamic_threshold_enabled=True, dynamic_sizing_enabled=True,
+            vol_regime_percentile_window_candles=17280, vol_regime_lookback_candles=288,
+        )
+        worst = _required_history_candles_worst_case(
+            strategy=strategy, base_params=params,
+            search_space={
+                "vol_regime_percentile_window_candles": (2880, 51840),
+                "vol_regime_lookback_candles": (12, 1440),
+            },
+        )
+        assert worst == 51840 + 1440  # NICHT 17280 + 288 (die base_params-Fixwerte)
+
+    def test_categorical_spec_uses_max_of_options(self):
+        strategy = build_strategy("pairwise_zscore")
+        params = BasketParams(formation_window_candles=2016)
+        worst = _required_history_candles_worst_case(
+            strategy=strategy, base_params=params,
+            search_space={"formation_window_candles": [1000, 5000, 3000]},
+        )
+        assert worst == 5000
+
+    def test_fields_outside_search_space_stay_at_base_params_value(self):
+        strategy = build_strategy("pairwise_zscore")
+        params = BasketParams(formation_window_candles=9999)
+        worst = _required_history_candles_worst_case(
+            strategy=strategy, base_params=params,
+            search_space={"entry_z": (1.0, 4.0)},  # formation_window_candles NICHT im search_space
+        )
+        assert worst == 9999
 #!####################
 
 
@@ -99,7 +181,7 @@ class TestTuneBasketParamsSmoke:
 
         assert len(result.folds) >= 2
         assert len(result.trials_df) == 2
-        assert set(result.best_params) == {"entry_z", "exit_z", "max_holding_half_life_multiplier"}
+        assert set(result.best_params) == {"entry_z", "exit_z"}
         assert np.isfinite(result.study.best_value)
 
     def test_raises_when_calibration_range_too_short(self, synthetic_panel, timeline):
@@ -127,10 +209,9 @@ class TestTuneBasketParamsSmoke:
 
 #!#################### NEU
 class TestGenericSearchSpace:
-    """search_space (statt der frueher fest verdrahteten entry_z/exit_z/
-    max_holding_half_life_multiplier) -- src/backtest/strategy.py:
-    GarchWilksToleranceStrategy braucht z.B. wilks_p_content/
-    wilks_confidence statt entry_z/exit_z, siehe Modul-Docstring."""
+    """search_space (statt der frueher fest verdrahteten entry_z/exit_z) --
+    src/backtest/strategy.py: GarchWilksToleranceStrategy braucht z.B.
+    wilks_p_content/wilks_confidence statt entry_z/exit_z, siehe Modul-Docstring."""
 
     def test_is_range_spec_tuple_vs_list(self):
         # tuple -> IMMER Bereich, auch wenn die Werte wie eine 2er-Auswahl aussehen
@@ -234,7 +315,7 @@ class TestTuneAllBasketsAndOverrides:
         overrides = build_basket_overrides(results)
 
         assert set(overrides) == {"Basket 1"}
-        assert set(overrides["Basket 1"]) == {"entry_z", "exit_z", "max_holding_half_life_multiplier"}
+        assert set(overrides["Basket 1"]) == {"entry_z", "exit_z"}
 
     def test_seed_is_offset_per_basket(self, synthetic_panel, timeline, monkeypatch):
         """Regressionstest fuer den Seed-Kollisions-Bug: identischer Seed +

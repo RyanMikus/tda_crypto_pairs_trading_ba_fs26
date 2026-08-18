@@ -30,6 +30,7 @@ def compute_log_returns(price_df: pd.DataFrame) -> pd.DataFrame:
     return np.log(price_df / price_df.shift(1)).dropna(how="any")
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def compute_return_spread(returns_df: pd.DataFrame, ticker_1: str, ticker_2: str) -> pd.Series:
     """Rt = r_Ai,t - r_Aj,t -- Intra-Cluster-Spread-Zeitreihe für die
     Lin-et-al.-Signalgenerierung. NICHT für ADF/KPSS/Hurst/Half-Life verwenden
@@ -154,6 +155,7 @@ def evaluate_spread_quality(spread: pd.Series, *, alpha: float = 0.05) -> dict:
     }
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def compute_all_spread_diagnostics(price_df: pd.DataFrame, alpha: float = 0.05) -> pd.DataFrame:
     """Wendet analyze_spread_stationarity auf alle Tickerpaare an (alle mit allen).
 
@@ -185,6 +187,7 @@ def compute_all_spread_diagnostics(price_df: pd.DataFrame, alpha: float = 0.05) 
     return diagnostics_df
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def compute_johansen_test(price_df: pd.DataFrame, det_order: int = 0, k_ar_diff: int = 1) -> dict:
     """Johansen-Kointegrationstest über alle Ticker gleichzeitig (Log-Preise).
 
@@ -221,6 +224,7 @@ def compute_johansen_test(price_df: pd.DataFrame, det_order: int = 0, k_ar_diff:
     }
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def normalize_cointegration_vector(weights: pd.Series) -> pd.Series:
     """Normiert einen Johansen-Eigenvektor deterministisch.
 
@@ -236,6 +240,7 @@ def normalize_cointegration_vector(weights: pd.Series) -> pd.Series:
     return signed / signed.abs().sum()
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def build_cluster_spread(price_df: pd.DataFrame, weights: pd.Series) -> pd.Series:
     """Baut den Cluster-Spread als gewichtete Summe der Log-Preise.
 

@@ -75,6 +75,7 @@ def plot_exit_reason_breakdown(trades: pd.DataFrame, *, show: bool = True):
     return fig, ax
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def plot_holding_period_histogram(trades: pd.DataFrame, *, bins: int = 30, show: bool = True):
     if trades.empty:
         print("Keine Trades -- nichts zu plotten.")
@@ -139,6 +140,7 @@ def plot_basket_metric_comparison(
     return fig, ax
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def plot_pnl_vs_diagnostic(trades: pd.DataFrame, column: str, *, show: bool = True):
     """Streudiagramm net_pnl vs. einer Formations-Diagnostik-Spalte (z.B.
     half_life_periods, persistence, clique_size) -- der direkte Brückenschlag
@@ -256,6 +258,7 @@ def plot_trade_bollinger(
     return fig, ax
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def _pick_sample_trades(trades: pd.DataFrame, n: int) -> pd.DataFrame:
     """Wählt bis zu n Trades im Round-Robin über exit_reason (jeweils
     absteigend nach |net_pnl|) -- so zeigt die Stichprobe sowohl profitable
@@ -277,6 +280,7 @@ def _pick_sample_trades(trades: pd.DataFrame, n: int) -> pd.DataFrame:
     return trades.loc[selected]
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def plot_sample_trades_bollinger(
     result: BacktestResult,
     panel: dict[str, pd.DataFrame],

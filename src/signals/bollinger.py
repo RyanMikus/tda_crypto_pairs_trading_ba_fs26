@@ -36,6 +36,7 @@ from src.signals.spread import compute_price_spread, estimate_hedge_ratio
 # 1. Intra-Clique-Preis-Level-Spreads
 # ============================================================================
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def build_pairwise_price_spreads(
     price_df: pd.DataFrame, *, hedge_lookback_candles: int | None = None,
 ) -> tuple[pd.DataFrame, dict]:
@@ -83,6 +84,7 @@ def build_pairwise_price_spreads(
 # 2. Bollinger-Baender: gleitender Mittelwert + gleitende Standardabweichung
 # ============================================================================
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def compute_bollinger_bands(
     spread_df: pd.DataFrame, *, lookback_candles: int, n_std: float,
 ) -> dict[tuple, pd.DataFrame]:
@@ -124,6 +126,7 @@ def compute_bollinger_bands(
     return bands
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def compute_exit_mean(spread_df: pd.DataFrame, *, exit_lookback_candles: int) -> pd.DataFrame:
     """Rollierender Mittelwert des Preis-Spreads je Paar-Spalte, UNABHAENGIG
     vom Entry-Lookback (compute_bollinger_bands) -- eigenes, tunbares
@@ -150,6 +153,7 @@ def compute_exit_mean(spread_df: pd.DataFrame, *, exit_lookback_candles: int) ->
     return spread_df.rolling(exit_lookback_candles, min_periods=exit_lookback_candles).mean()
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def compute_max_zscore(bands: dict[tuple, pd.DataFrame]) -> pd.DataFrame:
     """Zmax_t = max(|Z_t| ueber alle Paare) je Zeitpunkt, plus welches Paar
     und in welche Richtung -- Pendant zu tolerance.compute_max_adjusted_spread.

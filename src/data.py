@@ -40,6 +40,7 @@ def _month_files(start_ts: pd.Timestamp, end_ts: pd.Timestamp, ohlcv_dir: Path) 
 #!#################### data_min/data_max aus dem kompletten geladenen ohlcv_df
 #!#################### ableitete -- hier liest nur erste/letzte Monatsdatei,
 #!#################### nicht alle Monate, deutlich schneller).
+#! WIRD NICHT MEHR GEBRAUCHT
 def available_data_range(ohlcv_dir: Path = OHLCV_DIR) -> tuple[pd.Timestamp, pd.Timestamp]:
     """(frühester, spätester) Zeitstempel über alle vorhandenen OHLCV-
     Monatsdateien -- liest dafür nur die timestamp-Spalte der chronologisch
@@ -64,6 +65,7 @@ def available_data_range(ohlcv_dir: Path = OHLCV_DIR) -> tuple[pd.Timestamp, pd.
 #!####################
 
 
+#! WIRD NICHT MEHR GEBRAUCHT
 def load_close_prices(tickers: list[str], start_date: str, n_candles: int) -> pd.DataFrame:
     """Lädt close-Preise für die gegebenen Ticker ab start_date, begrenzt auf
     n_candles Kerzen. Liest nur die dafür nötigen Monatsdateien.

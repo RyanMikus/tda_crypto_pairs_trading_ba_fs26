@@ -94,6 +94,7 @@ class BacktestEngine:
                     f"Panel früher starten lassen oder formation_window_candles verkleinern."
                 )
 
+    #! WIRD NICHT MEHR GEBRAUCHT
     def describe_guards(self) -> str:
         """G1-G8 Guards, die für die Backtest-Engine gelten.
         G1: Clique-Verfügbarkeitslag (Discovery-Intervall)
@@ -203,7 +204,7 @@ class BacktestEngine:
                     timestamp=ts, bar_index=i, basket=position.basket, params=params,
                     snapshot=active_snapshot[position.basket], prices=prices,
                     open_positions=open_positions, equity=equity, free_slots=0,
-                    candle_minutes=self.config.candle_minutes,  #!#################### NEU
+                    candle_minutes=self.config.candle_minutes,   
                 )
                 decision = evaluate_exit_chain(position, ctx, self.exit_chain)
                 if not decision.should_exit:
@@ -225,7 +226,7 @@ class BacktestEngine:
                 ctx = BarContext(
                     timestamp=ts, bar_index=i, basket=basket, params=params, snapshot=snapshot,
                     prices=prices, open_positions=open_positions, equity=equity, free_slots=free,
-                    candle_minutes=self.config.candle_minutes,  #!#################### NEU
+                    candle_minutes=self.config.candle_minutes, 
                 )
                 state = self._get_or_fit_state(basket, snapshot, ctx, params)
                 if state is None or not state.definitions:

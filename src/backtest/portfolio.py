@@ -95,12 +95,6 @@ class Portfolio:
     def current_gross_notional(self) -> float:
         return sum(pos.gross_notional for pos in self.open_positions.values())
 
-    def asset_in_use_counts(self) -> dict[int, int]:
-        counts: dict[int, int] = {}
-        for pos in self.open_positions.values():
-            for asset_id in pos.asset_ids:
-                counts[asset_id] = counts.get(asset_id, 0) + 1
-        return counts
 
     def can_open(self, *, estimated_gross_notional: float, equity: float, max_gross_exposure: float, max_total_positions: int) -> bool:
         if len(self.open_positions) >= max_total_positions:

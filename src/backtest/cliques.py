@@ -195,6 +195,7 @@ class CliqueTimeline:
         """Sortiert nach available_from."""
         return self._snapshots_by_basket.get(basket, [])
 
+    #! WIRD NICHT MEHR GEBRAUCHT
     def active_at(self, basket: str, ts: pd.Timestamp) -> CliqueSnapshot | None:
         snaps = self.snapshots(basket)
         avail = [s.available_from for s in snaps]
@@ -219,6 +220,7 @@ class CliqueTimeline:
             })
         return pd.DataFrame(rows)
 
+    #! WIRD NICHT MEHR GEBRAUCHT
     def meta(self) -> dict:
         return self._meta
 
