@@ -542,14 +542,25 @@ def _tuning_slug(label: str) -> str:
 
 def save_tuning_results(
     results: dict[str, TuningResult], *, label: str, tuning_dir: Path = TUNING_DIR,
-    candle_minutes: int = CANDLE_MINUTES,   
-    fee_preset: str | None = None,  
+    candle_minutes: int = CANDLE_MINUTES,
+    fee_preset: str | None = None,
+    fixed_overrides: dict[str, dict] | dict | None = None,
 ) -> Path:
     """Speichert best_params.json (alle Baskets) + trials_<basket>.parquet
     (je Basket) unter tuning_dir/<run_id>/. run_id = Zeitstempel + Slug(label),
     analog zu runs.save_run.
 
-  
+    fixed_overrides: die BasketParams-Felder, die WAEHREND DIESES LAUFS fix
+    waren (also NICHT gesucht wurden -- z.B. "tunen"=AUS im Widget-Panel in
+    08_tune_dynamic_vol.ipynb). result.best_params (aus Optuna study.best_params)
+    enthaelt NUR die tatsaechlich gesuchten Felder -- ohne fixed_overrides gehen
+    die fixen Werte beim Speichern verloren und ein spaeterer Konsument (z.B.
+    09_tuning_overview.ipynb) muesste eigene, potenziell abweichende Defaults
+    fuer diese Felder raten. Entweder EIN dict (gleiche Fix-Werte fuer alle
+    Baskets in `results`, z.B. das Widget-Panel-Sequenzmuster) oder ein
+    {basket: dict}-Mapping (unterschiedliche Fix-Werte je Basket). None (Default)
+    speichert einen leeren Fix-Werte-Block -- unveraendertes Verhalten fuer
+    Aufrufer, die das Feature nicht nutzen.
 
     Returns:
         Pfad zum Lauf-Ordner.
@@ -561,14 +572,23 @@ def save_tuning_results(
     run_dir = tuning_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    def _fixed_overrides_for(basket: str) -> dict:
+        if fixed_overrides is None:
+            return {}
+        if basket in results and set(results.keys()) & set(fixed_overrides.keys()):
+            # {basket: dict}-Form erkannt (mind. ein Basket-Key trifft) -- pro Basket holen.
+            return dict(fixed_overrides.get(basket, {}))
+        return dict(fixed_overrides)
+
     best_params_payload = {
         basket: {
             "best_params": result.best_params,
+            "fixed_overrides": _fixed_overrides_for(basket),
             "best_objective": float(result.study.best_value),
             "n_trials": len(result.trials_df),
             "n_folds": len(result.folds),
-            "candle_minutes": candle_minutes,   
-            "fee_preset": fee_preset,  
+            "candle_minutes": candle_minutes,
+            "fee_preset": fee_preset,
         }
         for basket, result in results.items()
     }
@@ -587,12 +607,16 @@ def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
     """Liest jede best_params.json unter tuning_dir/<run_id>/ und baut eine
     lange Tabelle (eine Zeile pro Basket-Eintrag pro Run) mit den Spalten
     run_id, basket, candle_minutes, fee_preset, best_objective, n_trials,
-    n_folds, best_params (dict).
+    n_folds, best_params (dict), fixed_overrides (dict).
 
     Läufe aus save_tuning_results VOR der candle_minutes/fee_preset-Ergänzung
     haben candle_minutes=NaN bzw. fee_preset=None (Feld fehlte im
     gespeicherten JSON) -- werden nicht übersprungen, aber beim Vergleich
-    sind sie nicht eindeutig zuordenbar.
+    sind sie nicht eindeutig zuordenbar. Ebenso haben Läufe VOR der
+    fixed_overrides-Ergänzung fixed_overrides={} (Feld fehlte) -- ein
+    Konsument wie 09_tuning_overview.ipynb faellt dann fuer diese Felder auf
+    seine eigenen Defaults zurueck, statt die (nicht mehr rekonstruierbaren)
+    tatsaechlichen Fix-Werte des damaligen Laufs zu verwenden.
 
     Returns:
         DataFrame, leer (mit den o.g. Spalten) falls tuning_dir keine
@@ -600,7 +624,7 @@ def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
     """
     import json
 
-    columns = ["run_id", "basket", "candle_minutes", "fee_preset", "best_objective", "n_trials", "n_folds", "best_params"]
+    columns = ["run_id", "basket", "candle_minutes", "fee_preset", "best_objective", "n_trials", "n_folds", "best_params", "fixed_overrides"]
     if not tuning_dir.exists():
         return pd.DataFrame(columns=columns)
 
@@ -620,6 +644,7 @@ def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
                 "n_trials": entry.get("n_trials"),
                 "n_folds": entry.get("n_folds"),
                 "best_params": entry.get("best_params"),
+                "fixed_overrides": entry.get("fixed_overrides") or {},
             })
     return pd.DataFrame(rows, columns=columns)
 

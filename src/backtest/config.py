@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
-from src.config import CANDLE_MINUTES
+from src.config import CANDLE_MINUTES, candles_per_day
 
 _TIMEDELTA_AUTO = "auto"
 
@@ -150,6 +150,55 @@ class BasketParams:
 
 
 _BASKET_PARAM_FIELDS = frozenset(f.name for f in fields(BasketParams))
+
+# BasketParams-Felder, deren Klassen-DEFAULT als Kerzenzahl auf Basis von 5-Min-Kerzen
+# kalibriert ist (288 Kerzen/Tag, siehe die jeweiligen Feld-Kommentare oben:
+# vol_regime_lookback_candles=288 -> 1 Tag, vol_regime_percentile_window_candles=60*288
+# -> 60 Tage, formation_window_candles=288*7 -> 7 Tage, bollinger_window_candles=288 ->
+# 1 Tag). Bei jeder anderen candle_minutes bedeutet dieselbe Kerzenzahl eine ANDERE
+# Kalenderzeit (BaseSpreadZScoreStrategy.required_history_candles in strategy.py ist
+# selbst candle_minutes-agnostisch -- es zaehlt nur Kerzen) -- ohne Skalierung waeren
+# diese Defaults bei z.B. 240min entweder sinnlos kurz (als Kalenderzeit gemeint) oder
+# (falls unveraendert als Kerzenzahl uebernommen) 48x zu lang im warmup_days-Sinn.
+_CANDLE_SCALED_FIELDS = (
+    "vol_regime_lookback_candles",
+    "vol_regime_percentile_window_candles",
+    "formation_window_candles",
+    "bollinger_window_candles",
+)
+_CANDLE_SCALED_FIELDS_REFERENCE_MINUTES = 5
+
+
+def scale_candle_fields_to_candle_minutes(params: "BasketParams", candle_minutes: int) -> "BasketParams":
+    """Skaliert die in _CANDLE_SCALED_FIELDS gelisteten Kerzenzahl-Felder von params
+    von ihrer 5-Min-Referenzbasis auf candle_minutes um, mit derselben Kalenderzeit-
+    Bedeutung (z.B. vol_regime_lookback_candles=288 bei 5min bleibt bei 240min genau
+    1 Tag = 6 Kerzen). NUR diese vier Felder werden angefasst -- alle anderen Felder
+    (entry_z, stop_z, min_half_life_candles, ...) bleiben unveraendert, da sie keine
+    eingebaute 5min-Kalibrierung tragen (z.B. min_half_life_candles/max_half_life_candles
+    stammen typischerweise direkt aus einem Tuning-Lauf FUER GENAU DIESE candle_minutes
+    und sind bereits korrekt).
+
+    Zentrale Umrechnung fuer jeden Aufrufer, der BasketParams-Defaults (oder mit
+    dataclasses.replace() nur TEILWEISE ueberschriebene BasketParams, z.B. best_params
+    aus einem Tuning-Lauf, das diese Felder nicht selbst gesucht hat) fuer eine von
+    5min abweichende candle_minutes verwendet -- siehe notebooks/04_backtest/
+    08_tune_dynamic_vol.ipynb (Widget-Panel, Slider in Tagen/Stunden statt Kerzen) und
+    09_tuning_overview.ipynb (BASE_PARAMS-Fallback fuer Felder, die best_params nicht
+    enthaelt) fuer die beiden Aufrufer, die dasselbe Problem sonst je einzeln loesen
+    muessten.
+
+    Idempotent bei candle_minutes == _CANDLE_SCALED_FIELDS_REFERENCE_MINUTES (Faktor 1,
+    keine Rundungsabweichung durch wiederholtes Skalieren).
+    """
+    if candle_minutes == _CANDLE_SCALED_FIELDS_REFERENCE_MINUTES:
+        return params
+    scale = candles_per_day(candle_minutes) / candles_per_day(_CANDLE_SCALED_FIELDS_REFERENCE_MINUTES)
+    overrides = {
+        name: max(1, round(getattr(params, name) * scale))
+        for name in _CANDLE_SCALED_FIELDS
+    }
+    return replace(params, **overrides)
 
 
 def _json_safe(obj: Any) -> Any:
