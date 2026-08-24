@@ -210,6 +210,15 @@ class CliqueTimeline:
             })
         return pd.DataFrame(rows)
 
+    def describe(self) -> str:
+        lines = [f"Discovery-Intervall (Median über Baskets): {self._interval}"]
+        for _, row in self.coverage().iterrows():
+            lines.append(
+                f"  {row['basket']}: {row['n_snapshots']} Snapshots, "
+                f"{row['first']} → {row['last']}, Intervall {row['interval']}"
+            )
+        return "\n".join(lines)
+
 
 class TimelineCursor:
     """Pro Basket ein monoton vorwärtslaufender Zeiger -- O(1) amortisiert pro
