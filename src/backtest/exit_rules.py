@@ -19,7 +19,7 @@ from scipy.spatial.distance import squareform
 
 from src.backtest.types import BarContext, ExitDecision, NO_EXIT, Position
 from src.clustering.helpers import HelperFunctions
-from src.config import candles_per_day  
+from src.config import candles_per_day
 
 
 class ExitRule(Protocol):
@@ -135,11 +135,11 @@ class TopologicalBreakRule:
         if not ctx.params.topo_break_enabled:
             return NO_EXIT
 
-    
+
         window_candles = ctx.params.topo_break_window_candles or round(
             position.entry_lookback_days * candles_per_day(ctx.candle_minutes)
         )
-        
+
         if ctx.bar_index < window_candles - 1:
             return NO_EXIT  # zu wenig Historie -- kein Fehler, einfach (noch) nicht prüfbar
         if len(position.symbols) < 2:

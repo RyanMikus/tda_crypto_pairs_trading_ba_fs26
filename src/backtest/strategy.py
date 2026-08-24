@@ -327,78 +327,8 @@ class PairwiseZScoreStrategy(BaseSpreadZScoreStrategy):
         return definitions, rejected
 
 
-class ClusterSpreadStrategy(BaseSpreadZScoreStrategy):
-    """Bildet aus einer Clique GENAU EINE Position: den gewichteten N-Asset-
-    Spread aus der stärksten Johansen-Kointegrationsbeziehung. Läuft über
-    dieselbe BacktestEngine wie PairwiseZScoreStrategy, ohne dass diese
-    angefasst werden muss -- das ist der Interface-Test."""
-
-    name = "cluster_johansen"
-
-    #! WIRD NICHT MEHR GEBRAUCHT
-    def build_definitions(
-        self, *, snapshot: CliqueSnapshot, window: pd.DataFrame, params: BasketParams,
-        regime_window: pd.DataFrame | None = None,
-    ) -> tuple[list[SpreadDefinition], list[dict]]:
-        from src.signals import spread as sp
-
-        symbols = list(snapshot.symbols)
-        sym_to_asset_id = dict(zip(snapshot.symbols, snapshot.asset_ids))
-        rejected: list[dict] = []
-
-        if len(symbols) < 2:
-            return [], rejected
-
-        try:
-            johansen = sp.compute_johansen_test(window[symbols])
-        except Exception as exc:  # z.B. singuläre Kovarianzmatrix bei (fast) konstanten Preisen
-            return [], [{"reason": f"johansen_failed: {exc}"}]
-
-        if johansen["n_coint_relations"] < params.min_johansen_relations:
-            return [], [{
-                "reason": "insufficient_coint_relations",
-                "n_coint_relations": johansen["n_coint_relations"],
-            }]
-
-        weights = sp.normalize_cointegration_vector(johansen["eigenvectors"]["relation_1"])
-        cluster_spread_series = sp.build_cluster_spread(window, weights)
-        diag = sp.evaluate_spread_quality(cluster_spread_series, alpha=params.adf_alpha)
-        diag["n_coint_relations"] = johansen["n_coint_relations"]
-
-        ok, why = _quality_filter(diag, params)
-        if not ok:
-            return [], [{"reason": why, **diag}]
-
-        if regime_window is not None:
-            regime_stats = sp.compute_realized_vol_regime(
-                regime_window[list(weights.index)], weights.to_numpy(),
-                rv_lookback_candles=params.vol_regime_lookback_candles,
-                low_percentile=params.vol_regime_low_percentile,
-                high_percentile=params.vol_regime_high_percentile,
-            )
-            if regime_stats is not None:
-                diag = {**diag, **regime_stats}
-
-        mu, sigma = sp.spread_zscore_params(cluster_spread_series)
-        definition = SpreadDefinition(
-            kind="cluster",
-            asset_ids=tuple(sym_to_asset_id[s] for s in weights.index),
-            symbols=tuple(weights.index),
-            weights=tuple(float(w) for w in weights.to_numpy()),
-            mu=mu,
-            sigma=sigma,
-            fitted_at=window.index[-1],
-            formation_start=window.index[0],
-            diagnostics=diag,
-        )
-        return [definition], rejected
-
-
-
-
 STRATEGY_REGISTRY: dict[str, type] = {
     PairwiseZScoreStrategy.name: PairwiseZScoreStrategy,
-    ClusterSpreadStrategy.name: ClusterSpreadStrategy,
 }
 
 

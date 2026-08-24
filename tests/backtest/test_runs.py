@@ -89,7 +89,7 @@ class TestSaveLoadRoundtrip:
         bt_runs.save_run(result_b, backtests_dir=tmp_path, overwrite=True)  # darf nicht raisen
 
 
-class TestListAndDeleteRuns:
+class TestListRuns:
     def test_list_runs_finds_saved_run(self, tmp_path):
         result = _make_result("list-test")
         bt_runs.save_run(result, backtests_dir=tmp_path)
@@ -99,19 +99,6 @@ class TestListAndDeleteRuns:
     def test_list_runs_on_empty_dir_returns_empty_frame(self, tmp_path):
         runs = bt_runs.list_runs(backtests_dir=tmp_path)
         assert runs.empty
-
-    def test_delete_run_removes_directory_and_updates_index(self, tmp_path):
-        result = _make_result("delete-test")
-        run_dir = bt_runs.save_run(result, backtests_dir=tmp_path)
-        bt_runs.delete_run(result.run_id, confirm=True, backtests_dir=tmp_path)
-        assert not run_dir.exists()
-        assert result.run_id not in bt_runs.list_runs(backtests_dir=tmp_path, refresh_index=True)["run_id"].tolist()
-
-    def test_delete_run_requires_explicit_confirm(self, tmp_path):
-        result = _make_result("delete-test-2")
-        bt_runs.save_run(result, backtests_dir=tmp_path)
-        with pytest.raises(ValueError):
-            bt_runs.delete_run(result.run_id, confirm=False, backtests_dir=tmp_path)
 
 
 class TestCompareRunsAndDiffConfigs:

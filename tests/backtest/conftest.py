@@ -3,8 +3,8 @@
 Alles hier ist SYNTHETISCH (kein Zugriff auf data/raw/... oder
 data/processed/cliques/...), damit die Testsuite schnell, deterministisch und
 unabhängig vom tatsächlichen (grossen) Datenbestand läuft. AAAUSDT/BBBUSDT
-sind absichtlich stark kointegriert gebaut, damit PairwiseZScoreStrategy/
-ClusterSpreadStrategy in den End-to-End-Tests zuverlässig Trades erzeugen;
+sind absichtlich stark kointegriert gebaut, damit PairwiseZScoreStrategy
+in den End-to-End-Tests zuverlässig Trades erzeugt;
 CCCUSDT/DDDUSDT sind unabhängige Random Walks als "Rauschen".
 """
 

@@ -175,7 +175,6 @@ def _rebuild_index(backtests_dir: Path) -> pd.DataFrame:
     return df
 
 
-#! WIRD NICHT MEHR GEBRAUCHT
 def list_runs(*, backtests_dir: Path = BACKTESTS_DIR, refresh_index: bool = False) -> pd.DataFrame:
     index_path = backtests_dir / "_index.parquet"
     if refresh_index or not index_path.exists():
@@ -183,17 +182,6 @@ def list_runs(*, backtests_dir: Path = BACKTESTS_DIR, refresh_index: bool = Fals
             return pd.DataFrame(columns=_INDEX_COLUMNS)
         return _rebuild_index(backtests_dir)
     return pd.read_parquet(index_path)
-
-
-#! WIRD NICHT MEHR GEBRAUCHT
-def delete_run(run_id: str, *, confirm: bool, backtests_dir: Path = BACKTESTS_DIR) -> None:
-    if not confirm:
-        raise ValueError("delete_run löscht unwiderruflich -- explizit confirm=True übergeben.")
-    run_dir = backtests_dir / run_id
-    if run_dir.exists():
-        shutil.rmtree(run_dir)
-    _rebuild_index(backtests_dir)
-
 
 def _style_compare(df: pd.DataFrame):
     """Hebt pro Metrik-Zeile den besten Run hervor (nur für Metriken in
@@ -256,7 +244,6 @@ def compare_runs(
     return table
 
 
-#! WIRD NICHT MEHR GEBRAUCHT
 def diff_configs(run_ids: list[str], *, backtests_dir: Path = BACKTESTS_DIR) -> pd.DataFrame:
     """Zeigt NUR die Config-Felder, in denen sich die angegebenen Runs
     unterscheiden -- inkl. der aufgelösten Pro-Basket-Parameter. Ohne diese

@@ -1,15 +1,14 @@
-"""Spread-Diagnostik: 1:1-Extraktion aus notebooks/03_signal_generation/TradeData.ipynb.
+"""Spread-Diagnostik für Pairwise-Mean-Reversion.
 
-Prüft, ob ein Preis-Level-Spread zwischen Tickern (paarweise, CADF-Stil) oder
-über eine ganze Cluster-Gruppe (Johansen-Kointegration) mean-revertierend ist.
-Reine Signalgenerierungs-Logik ohne Kenntnis von Position/Kapital/Zeit-
-Simulation -- wird sowohl vom explorativen TradeData.ipynb als auch von den
-Backtest-Strategien (src/backtest/strategy.py) verwendet.
+Prüft, ob ein Preis-Level-Spread zwischen zwei Tickern (CADF-Stil) mean-
+revertierend ist. Reine Signalgenerierungs-Logik ohne Kenntnis von
+Position/Kapital/Zeit-Simulation -- wird von PairwiseZScoreStrategy
+(src/backtest/strategy.py) verwendet.
 
-WICHTIG (siehe TradeData.ipynb, Zelle "Schritt 1"): die Renditedifferenz
-r1_t - r2_t ist für Stationaritätstests UNGEEIGNET (trivial stationär, da
-bereits log-differenziert). ADF/KPSS/Hurst/Half-Life werden stattdessen auf
-dem PREIS-Level-Spread angewendet: spread_t = log(P1_t) - hedge_ratio*log(P2_t).
+WICHTIG: die Renditedifferenz r1_t - r2_t ist für Stationaritätstests
+UNGEEIGNET (trivial stationär, da bereits log-differenziert). ADF/KPSS/Hurst/
+Half-Life werden stattdessen auf dem PREIS-Level-Spread angewendet:
+spread_t = log(P1_t) - hedge_ratio*log(P2_t).
 """
 
 import warnings
@@ -28,14 +27,6 @@ _JOHANSEN_SIG_COLUMNS = {0.10: 0, 0.05: 1, 0.01: 2}
 def compute_log_returns(price_df: pd.DataFrame) -> pd.DataFrame:
     """Log-Returns pro Ticker: r_t = log(P_t / P_t-1). Erste Zeile ist NaN -> dropna."""
     return np.log(price_df / price_df.shift(1)).dropna(how="any")
-
-
-#! WIRD NICHT MEHR GEBRAUCHT
-def compute_return_spread(returns_df: pd.DataFrame, ticker_1: str, ticker_2: str) -> pd.Series:
-    """Rt = r_Ai,t - r_Aj,t -- Intra-Cluster-Spread-Zeitreihe für die
-    Lin-et-al.-Signalgenerierung. NICHT für ADF/KPSS/Hurst/Half-Life verwenden
-    (siehe compute_price_spread)."""
-    return returns_df[ticker_1] - returns_df[ticker_2]
 
 
 def estimate_hedge_ratio(price_df: pd.DataFrame, ticker_1: str, ticker_2: str) -> float:
@@ -124,9 +115,9 @@ def analyze_spread_stationarity(price_df: pd.DataFrame, ticker_1: str, ticker_2:
 
 def evaluate_spread_quality(spread: pd.Series, *, alpha: float = 0.05) -> dict:
     """ADF/KPSS/Hurst/Half-Life auf einer FERTIGEN Spread-Reihe (statt auf einem
-    Ticker-Paar wie analyze_spread_stationarity). Nötig, weil der Cluster-Spread
-    aus N Assets kein Paar ist. Rückgabe-Schlüssel identisch zu
-    analyze_spread_stationarity, minus ticker_1/ticker_2/hedge_ratio.
+    Ticker-Paar wie analyze_spread_stationarity, das diese Funktion intern
+    aufruft). Rückgabe-Schlüssel identisch zu analyze_spread_stationarity,
+    minus ticker_1/ticker_2/hedge_ratio.
     """
     adf_pvalue = adfuller(spread)[1]
     adf_stationary = adf_pvalue < alpha  # ADF: H0 = Unit Root -> p < alpha heisst stationär
@@ -153,102 +144,6 @@ def evaluate_spread_quality(spread: pd.Series, *, alpha: float = 0.05) -> dict:
         "half_life_periods": half_life,
         "mean_reverting": mean_reverting,
     }
-
-
-#! WIRD NICHT MEHR GEBRAUCHT
-def compute_all_spread_diagnostics(price_df: pd.DataFrame, alpha: float = 0.05) -> pd.DataFrame:
-    """Wendet analyze_spread_stationarity auf alle Tickerpaare an (alle mit allen).
-
-    Returns:
-        Lange Tabelle, ein Zeile pro Paar, sortiert nach Half-Life aufsteigend;
-        mean_reverting=False Paare am Ende.
-    """
-    tickers = price_df.columns.tolist()
-
-    rows = []
-    for i, t1 in enumerate(tickers):
-        for j, t2 in enumerate(tickers):
-            if j <= i:
-                continue
-            rows.append(analyze_spread_stationarity(price_df, t1, t2, alpha=alpha))
-
-    diagnostics_df = pd.DataFrame(rows)
-    diagnostics_df = diagnostics_df.sort_values(
-        ["mean_reverting", "half_life_periods"], ascending=[False, True]
-    ).reset_index(drop=True)
-
-    n_capped = int(diagnostics_df["kpss_capped"].sum())
-    if n_capped > 0:
-        print(f"ℹ️  Bei {n_capped}/{len(diagnostics_df)} Paaren lag die KPSS-Teststatistik ausserhalb "
-              f"der Nachschlagetabelle — der angezeigte kpss_pvalue ist der nächstgelegene "
-              f"Tabellen-Grenzwert, nicht der exakte Wert. Die Stationaritäts-Einstufung "
-              f"(kpss_stationary) bleibt davon unberührt.")
-
-    return diagnostics_df
-
-
-#! WIRD NICHT MEHR GEBRAUCHT
-def compute_johansen_test(price_df: pd.DataFrame, det_order: int = 0, k_ar_diff: int = 1) -> dict:
-    """Johansen-Kointegrationstest über alle Ticker gleichzeitig (Log-Preise).
-
-    Prüft, ob es unter der GESAMTEN Gruppe von Tickern eine oder mehrere
-    stationäre Linearkombinationen gibt, statt nur einzelne Paare zu betrachten.
-
-    Returns:
-        Dict mit n_coint_relations, trace_stats, trace_crit_95, eigenvectors
-        (DataFrame, Spalten=relation_i, Zeilen=Ticker), result (rohes
-        statsmodels-Objekt).
-    """
-    tickers = price_df.columns.tolist()
-    log_prices = np.log(price_df)
-
-    result = coint_johansen(log_prices.to_numpy(), det_order, k_ar_diff)
-
-    trace_stats = result.lr1
-    trace_crit_95 = result.cvt[:, _JOHANSEN_SIG_COLUMNS[0.05]]
-
-    n_coint_relations = int(np.sum(trace_stats > trace_crit_95))
-
-    eigenvectors = pd.DataFrame(
-        result.evec[:, :len(tickers)],
-        index=tickers,
-        columns=[f"relation_{i+1}" for i in range(len(tickers))],
-    )
-
-    return {
-        "n_coint_relations": n_coint_relations,
-        "trace_stats": trace_stats,
-        "trace_crit_95": trace_crit_95,
-        "eigenvectors": eigenvectors,
-        "result": result,
-    }
-
-
-#! WIRD NICHT MEHR GEBRAUCHT
-def normalize_cointegration_vector(weights: pd.Series) -> pd.Series:
-    """Normiert einen Johansen-Eigenvektor deterministisch.
-
-    Johansen-Eigenvektoren haben beliebiges Vorzeichen UND beliebige Skalierung
-    (statsmodels normiert nicht deterministisch). Ohne diese Normierung dreht
-    derselbe Cluster zwischen zwei Snapshots die Spread-Richtung -- der Z-Score
-    springt dann von +2 auf -2, obwohl sich ökonomisch nichts geändert hat.
-
-    Konvention: Element mit grösstem |w| wird positiv, danach sum(|w|) == 1.
-    """
-    idx_max = weights.abs().idxmax()
-    signed = weights if weights[idx_max] > 0 else -weights
-    return signed / signed.abs().sum()
-
-
-#! WIRD NICHT MEHR GEBRAUCHT
-def build_cluster_spread(price_df: pd.DataFrame, weights: pd.Series) -> pd.Series:
-    """Baut den Cluster-Spread als gewichtete Summe der Log-Preise.
-
-    weights kommt typischerweise aus normalize_cointegration_vector(
-    compute_johansen_test(...)["eigenvectors"]["relation_1"]).
-    """
-    log_prices = np.log(price_df[weights.index])
-    return (log_prices * weights).sum(axis=1)
 
 
 def spread_zscore_params(spread: pd.Series) -> tuple[float, float]:

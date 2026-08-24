@@ -1,14 +1,10 @@
-"""OHLCV-Panel-Loading, generalisiert aus notebooks/03_signal_generation/TradeData.ipynb.
+"""OHLCV-Panel-Loading fuer die Backtest-Engine.
 
-`load_close_prices` ist der rückwärtskompatible Wrapper mit identischer
-Semantik wie im Notebook (inkl. dropna(axis=0, how="any")) -- TradeData.ipynb
-importiert ab jetzt von hier statt die Funktion lokal zu definieren.
-
-`load_ohlcv_panel` ist die generalisierte Variante für die Backtest-Engine:
-mehrere Felder (nicht nur close), kein Wegwerfen ganzer Zeitstempel wegen
-eines einzelnen neu gelisteten Symbols (ein Asset, das erst ab Monat X
-existiert, darf nicht rückwirkend den ganzen Zeitraum vorher aus dem Panel
-löschen -- die Engine behandelt NaN pro Symbol selbst, siehe backtest/engine.py).
+`load_ohlcv_panel` ist die zentrale Ladefunktion: mehrere Felder (nicht nur
+close), kein Wegwerfen ganzer Zeitstempel wegen eines einzelnen neu gelisteten
+Symbols (ein Asset, das erst ab Monat X existiert, darf nicht rückwirkend den
+ganzen Zeitraum vorher aus dem Panel löschen -- die Engine behandelt NaN pro
+Symbol selbst, siehe backtest/engine.py).
 """
 
 from pathlib import Path
@@ -34,96 +30,11 @@ def _month_files(start_ts: pd.Timestamp, end_ts: pd.Timestamp, ohlcv_dir: Path) 
     return [f for f in files if f.exists()]
 
 
-#!#################### NEU: dynamisch ermittelter Datenzeitraum statt fest
-#!#################### codierter DATA_START/DATA_END-Konstanten in Notebooks
-#!#################### (siehe notebooks/03_Tradeing/quick_tuning.ipynb, das
-#!#################### data_min/data_max aus dem kompletten geladenen ohlcv_df
-#!#################### ableitete -- hier liest nur erste/letzte Monatsdatei,
-#!#################### nicht alle Monate, deutlich schneller).
-#! WIRD NICHT MEHR GEBRAUCHT
-def available_data_range(ohlcv_dir: Path = OHLCV_DIR) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """(frühester, spätester) Zeitstempel über alle vorhandenen OHLCV-
-    Monatsdateien -- liest dafür nur die timestamp-Spalte der chronologisch
-    ersten und letzten Datei (Dateien sind lückenlos aufeinanderfolgende
-    Monate, siehe _month_files), nicht den gesamten Datenbestand.
-
-    Returns:
-        (min_timestamp, max_timestamp), beide UTC-tz-aware.
-
-    Raises:
-        FileNotFoundError: falls ohlcv_dir keine ohlcv_*.parquet-Dateien enthält.
-    """
-    files = sorted(ohlcv_dir.glob("ohlcv_*.parquet"))
-    if not files:
-        raise FileNotFoundError(f"Keine ohlcv_*.parquet-Dateien in {ohlcv_dir} gefunden.")
-
-    first = pd.read_parquet(files[0], columns=["timestamp"])
-    last = pd.read_parquet(files[-1], columns=["timestamp"]) if len(files) > 1 else first
-    min_ts = pd.to_datetime(first["timestamp"], utc=True).min()
-    max_ts = pd.to_datetime(last["timestamp"], utc=True).max()
-    return min_ts, max_ts
-#!####################
-
-
-#! WIRD NICHT MEHR GEBRAUCHT
-def load_close_prices(tickers: list[str], start_date: str, n_candles: int) -> pd.DataFrame:
-    """Lädt close-Preise für die gegebenen Ticker ab start_date, begrenzt auf
-    n_candles Kerzen. Liest nur die dafür nötigen Monatsdateien.
-
-    Falls ab start_date weniger als n_candles Kerzen tatsächlich vorhanden sind,
-    wird NICHT auf die volle Fenstergrösse bestanden -- es werden einfach so
-    viele Kerzen wie vorhanden zurückgegeben.
-
-    Args:
-        tickers: Liste von market_symbol-Strings, z.B. ["BTCUSDT", "ETHUSDT"].
-        start_date: Startdatum (inklusive), z.B. "2025-01-01".
-        n_candles: Maximale Anzahl 5min-Kerzen ab start_date pro Ticker.
-
-    Returns:
-        DataFrame (timestamp x ticker) mit close-Preisen, NaN-Zeilen entfernt
-        (nur Zeitstempel, an denen alle Ticker einen Wert haben).
-    """
-    start_ts = pd.Timestamp(start_date, tz="UTC")
-    end_ts = start_ts + pd.Timedelta(minutes=5 * n_candles) + pd.Timedelta(days=2)
-
-    files = _month_files(start_ts, end_ts, OHLCV_DIR)
-    if not files:
-        raise FileNotFoundError(f"Keine OHLCV-Dateien für Zeitraum ab {start_date} gefunden.")
-
-    frames = []
-    for f in files:
-        df = pd.read_parquet(f, columns=["timestamp", "market_symbol", "close"])
-        df = df[df["market_symbol"].isin(tickers)]
-        frames.append(df)
-
-    raw = pd.concat(frames, ignore_index=True)
-    raw["timestamp"] = pd.to_datetime(raw["timestamp"], utc=True)
-    raw = raw[raw["timestamp"] >= start_ts]
-
-    price_matrix = (
-        raw.pivot_table(index="timestamp", columns="market_symbol", values="close", aggfunc="last")
-        .sort_index()
-    )
-
-    missing = [t for t in tickers if t not in price_matrix.columns]
-    if missing:
-        print(f"⚠️  Keine Daten gefunden für: {missing}")
-
-    price_matrix = price_matrix.dropna(axis=0, how="any")
-    price_matrix = price_matrix.iloc[:n_candles]
-    return price_matrix
-
-
 def full_candle_index(start: pd.Timestamp, end: pd.Timestamp, candle_minutes: int = 5) -> pd.DatetimeIndex:
     """Lückenloser UTC-DatetimeIndex von start bis end (inklusive), im candle_minutes-Raster."""
     return pd.date_range(start, end, freq=f"{candle_minutes}min", tz="UTC")
 
 
-#!#################### NEU: Aggregation eines 5-Min-Panels (load_ohlcv_panel)
-#!#################### auf gröbere Kerzengrössen (10/15/30 min, ...), damit die
-#!#################### Engine mit anderen candle_minutes laufen kann, ohne dass
-#!#################### die Rohdaten selbst in einer anderen Auflösung vorliegen
-#!#################### müssen.
 _RESAMPLE_AGG_BY_FIELD = {
     "open": "first",
     "high": "max",
@@ -182,7 +93,6 @@ def resample_ohlcv_panel(
         agg = _RESAMPLE_AGG_BY_FIELD[field]
         resampled[field] = matrix.resample(f"{target_minutes}min").agg(agg)
     return resampled
-#!####################
 
 
 def load_ohlcv_panel(
@@ -197,10 +107,10 @@ def load_ohlcv_panel(
 ) -> dict[str, pd.DataFrame]:
     """Lädt ein OHLCV-Panel {field: DataFrame(index=timestamp UTC, columns=market_symbol)}.
 
-    Anders als load_close_prices wird KEIN dropna(axis=0, how="any") gemacht --
-    ein einzelnes neu gelistetes Symbol würde sonst den kompletten Zeitraum
-    davor aus dem Panel löschen. NaN pro Symbol muss von der aufrufenden Stelle
-    (Engine) selbst behandelt werden.
+    Es wird KEIN dropna(axis=0, how="any") gemacht -- ein einzelnes neu
+    gelistetes Symbol würde sonst den kompletten Zeitraum davor aus dem Panel
+    löschen. NaN pro Symbol muss von der aufrufenden Stelle (Engine) selbst
+    behandelt werden.
 
     Args:
         start: Startzeitpunkt (inklusive).

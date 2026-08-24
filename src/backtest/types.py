@@ -237,11 +237,7 @@ class BarContext:
     open_positions: tuple[Position, ...]
     equity: float
     free_slots: int
-    #!#################### NEU: von der Engine aus config.candle_minutes befüllt,
-    #!#################### damit ExitRules (z.B. TopologicalBreakRule) nicht
-    #!#################### mehr fest von 5-Min-Kerzen (CANDLES_PER_DAY) ausgehen.
     candle_minutes: int = 5
-    #!####################
 
 
 @dataclass

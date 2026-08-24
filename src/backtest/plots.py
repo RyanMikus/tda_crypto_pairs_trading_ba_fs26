@@ -1,6 +1,5 @@
 """Equity-/Drawdown-/Trade-Visualisierung für Backtest-Notebooks. Statisches
-matplotlib, konsistent mit dem bestehenden Diagnostik-Stil in
-notebooks/03_signal_generation/TradeData.ipynb."""
+matplotlib, konsistent mit dem Diagnostik-Stil der übrigen Notebooks."""
 
 from __future__ import annotations
 
@@ -75,7 +74,6 @@ def plot_exit_reason_breakdown(trades: pd.DataFrame, *, show: bool = True):
     return fig, ax
 
 
-#! WIRD NICHT MEHR GEBRAUCHT
 def plot_holding_period_histogram(trades: pd.DataFrame, *, bins: int = 30, show: bool = True):
     if trades.empty:
         print("Keine Trades -- nichts zu plotten.")
@@ -140,7 +138,6 @@ def plot_basket_metric_comparison(
     return fig, ax
 
 
-#! WIRD NICHT MEHR GEBRAUCHT
 def plot_pnl_vs_diagnostic(trades: pd.DataFrame, column: str, *, show: bool = True):
     """Streudiagramm net_pnl vs. einer Formations-Diagnostik-Spalte (z.B.
     half_life_periods, persistence, clique_size) -- der direkte Brückenschlag
@@ -256,60 +253,3 @@ def plot_trade_bollinger(
         if show:
             plt.show()
     return fig, ax
-
-
-#! WIRD NICHT MEHR GEBRAUCHT
-def _pick_sample_trades(trades: pd.DataFrame, n: int) -> pd.DataFrame:
-    """Wählt bis zu n Trades im Round-Robin über exit_reason (jeweils
-    absteigend nach |net_pnl|) -- so zeigt die Stichprobe sowohl profitable
-    Mean-Reversion (target) als auch erzwungene Exits (timeout/stop/
-    clique_break), statt nur von den häufigsten/profitabelsten dominiert zu
-    werden."""
-    pools = {
-        reason: g.reindex(g["net_pnl"].abs().sort_values(ascending=False).index).index.tolist()
-        for reason, g in trades.groupby("exit_reason", sort=False)
-    }
-    reasons = list(pools)
-    selected: list = []
-    i = 0
-    while len(selected) < n and any(pools.values()):
-        reason = reasons[i % len(reasons)]
-        if pools[reason]:
-            selected.append(pools[reason].pop(0))
-        i += 1
-    return trades.loc[selected]
-
-
-#! WIRD NICHT MEHR GEBRAUCHT
-def plot_sample_trades_bollinger(
-    result: BacktestResult,
-    panel: dict[str, pd.DataFrame],
-    *,
-    n: int = 6,
-    buffer_candles: int = 144,
-    ncols: int = 2,
-    show: bool = True,
-):
-    """Raster aus n Beispiel-Trades mit rollierenden Bollinger-Bändern (siehe
-    plot_trade_bollinger), Auswahl über _pick_sample_trades gemischt nach
-    exit_reason."""
-    trades = result.trades
-    if trades.empty:
-        print("Keine Trades -- nichts zu plotten.")
-        return None, None
-
-    sample = _pick_sample_trades(trades, n)
-    nrows = int(np.ceil(len(sample) / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(6.5 * ncols, 4.2 * nrows), squeeze=False)
-
-    for ax, (_, trade) in zip(axes.flat, sample.iterrows()):
-        params = result.config.params_for(trade["basket"])
-        plot_trade_bollinger(trade, panel, params, buffer_candles=buffer_candles, ax=ax, show=False)
-    for ax in axes.flat[len(sample):]:
-        ax.axis("off")
-
-    fig.suptitle(f"Beispiel-Trades mit rollierenden Bollinger-Bändern — {result.config.label}", fontsize=11)
-    plt.tight_layout()
-    if show:
-        plt.show()
-    return fig, axes

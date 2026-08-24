@@ -5,7 +5,7 @@ Konvention, damit Runs untereinander vergleichbar bleiben:
 
 1. **Neues Backtest-Notebook = `_template.ipynb` kopieren.**
    `cp _template.ipynb NN_kurzname.ipynb`, `NN` zweistellig fortlaufend
-   (analog zu `01_data_aquisition/`, `02_tda_clustering/`, `03_signal_generation/`).
+   (analog zu `01_data_aquisition/`, `02_tda_clustering/`).
 
 2. **Nur zwei Zellen werden angepasst:**
    - die Konfigurationszelle (Basket-Auswahl, Strategie, `BasketParams`,
@@ -30,13 +30,7 @@ Konvention, damit Runs untereinander vergleichbar bleiben:
 5. `04_run_comparison.ipynb` führt **nie** einen Backtest aus, sondern liest
    ausschließlich gespeicherte Runs aus `data/processed/backtests/` — bleibt
    dadurch in Sekunden reproduzierbar.
-6. `06_strategy_comparison.ipynb` führt mehrere Strategien (Default:
-   `pairwise_zscore` vs. `garch_wilks`) auf denselben Baskets/Zeitraum aus,
-   speichert jeden Run einzeln (Punkt 4) und vergleicht sie danach mit
-   denselben Bausteinen wie `04_run_comparison.ipynb`. Funktionales Pendant
-   zum alten `notebooks/03_Tradeing/strategy_comparison.ipynb`, hier auf der
-   aktuellen Engine statt der alten `pairtrading_engine.py`-Familie.
-7. `08_tune_dynamic_vol.ipynb` bedient `src.backtest.tuning.tune_basket_params`
+6. `08_tune_dynamic_vol.ipynb` bedient `src.backtest.tuning.tune_basket_params`
    für `pairwise_zscore` mit `symmetric_exit`/`dynamic_threshold_enabled`/
    `dynamic_sizing_enabled` fest an (siehe docs/project/"Suggested methods für
    improving trading performance.pdf" A.1/A.2/E) sowohl über eine automatische
@@ -45,7 +39,7 @@ Konvention, damit Runs untereinander vergleichbar bleiben:
    Fix-/Bereichsfeld pro Parameter, siehe `src.backtest.tuning.SearchSpec`) --
    inkl. Checkbox, um automatisch alle Kerzenlängen (5/10/15/30/60/240 min)
    nacheinander durchzutunen.
-8. `09_tuning_overview.ipynb` liest **alle** gespeicherten Tuning-Läufe aus
+7. `09_tuning_overview.ipynb` liest **alle** gespeicherten Tuning-Läufe aus
    `08` (`src.backtest.tuning.load_all_tuning_results`) und führt pro
    Basket×Kerzenlänge-Kombination einen vollständigen Backtest über den
    **gesamten** Zeitraum aus, geteilt in Test (`CALIBRATION_RANGE`,
@@ -62,11 +56,12 @@ Jedes Notebook druckt vor dem Lauf `engine.describe_guards()` aus (G1–G8, sieh
 (`split_calibration_backtest`) darf sich nicht mit dem Backtest-Zeitraum
 überschneiden — das wird beim Bauen der `BacktestConfig` hart geprüft.
 
-## Bekannt fehlend (bewusst, siehe Plan)
+## Exit-Regeln
 
-Ein topologischer Struktur-Break-Detektor (Single-Linkage + `fcluster` bei
-`ε* − δ`, siehe `docs/project/BA_aufgabenstellung_zusatz.pdf`) ist **nicht**
-Teil der Engine — er wird bewusst separat und sorgfältig ergänzt. Die
-Exit-Rule-Architektur (`src/backtest/exit_rules.py`) ist so gebaut, dass eine
-solche Regel später als weiteres `ExitRule`-Objekt in `DEFAULT_EXIT_CHAIN`
-eingehängt werden kann, ohne `engine.py` zu ändern.
+`DEFAULT_EXIT_CHAIN` (`src/backtest/exit_rules.py`) wendet pro Bar mehrere
+Regeln in fester Reihenfolge an: `DataGapRule`, `StopLossRule`,
+`TopologicalBreakRule` (Single-Linkage + `fcluster` bei `ε* − δ`, siehe
+`docs/project/BA_aufgabenstellung_zusatz.pdf`; standardmässig AUS über
+`BasketParams.topo_break_enabled`), `MaxHoldingDaysRule`, `CliqueBreakRule`.
+Weitere Regeln lassen sich als zusätzliches `ExitRule`-Objekt in die Kette
+einhängen, ohne `engine.py` zu ändern.

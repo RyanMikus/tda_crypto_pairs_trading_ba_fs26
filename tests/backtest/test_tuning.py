@@ -4,15 +4,14 @@ import pytest
 
 from src.backtest.config import BasketParams, DateRange
 from src.backtest.tuning import (
-    TuningResult, build_basket_overrides, generate_walkforward_folds,
-    tune_all_baskets, tune_basket_params,
+    TuningResult, generate_walkforward_folds, tune_basket_params,
 )
-from src.backtest.tuning import _is_range_spec, _suggest_param, save_tuning_results  #!#################### NEU
-from src.backtest.tuning import load_all_tuning_results  #!#################### NEU
-from src.backtest.tuning import DASHBOARD_PORTS, _port_is_open, ensure_dashboard_running  #!#################### NEU
-from src.backtest.tuning import fold_days_for_n_windows  #!#################### NEU
-from src.backtest.tuning import _required_history_candles_worst_case  #!#################### NEU
-from src.backtest.strategy import build_strategy  #!#################### NEU
+from src.backtest.tuning import _is_range_spec, _suggest_param, save_tuning_results  
+from src.backtest.tuning import load_all_tuning_results  
+from src.backtest.tuning import DASHBOARD_PORTS, _port_is_open, ensure_dashboard_running  
+from src.backtest.tuning import fold_days_for_n_windows  
+from src.backtest.tuning import _required_history_candles_worst_case  
+from src.backtest.strategy import build_strategy  
 
 
 class TestGenerateWalkforwardFolds:
@@ -41,7 +40,6 @@ class TestGenerateWalkforwardFolds:
             generate_walkforward_folds(cal, fold_days=10, warmup_days=-1)
 
 
-#!#################### NEU
 class TestFoldDaysForNWindows:
     """fold_days_for_n_windows -- Ruecktransformation von n_windows (wie im
     alten auto_walkforward_layout) auf das von generate_walkforward_folds/
@@ -84,10 +82,7 @@ class TestFoldDaysForNWindows:
             search_space={"formation_window_candles": (288, 288 * 60)},  # Obergrenze weit ueber params-Fixwert
         )
         assert fold_days_with <= fold_days_without
-#!####################
 
-
-#!#################### NEU
 class TestRequiredHistoryCandlesWorstCase:
     """_required_history_candles_worst_case -- Regressionstest fuer den Bug,
     bei dem ein Optuna-Trial formation_window_candles/vol_regime_* groesser
@@ -150,7 +145,7 @@ class TestRequiredHistoryCandlesWorstCase:
             search_space={"entry_z": (1.0, 4.0)},  # formation_window_candles NICHT im search_space
         )
         assert worst == 9999
-#!####################
+
 
 
 def _tiny_params():
@@ -207,7 +202,7 @@ class TestTuneBasketParamsSmoke:
             )
 
 
-#!#################### NEU
+
 class TestGenericSearchSpace:
     """search_space (statt der frueher fest verdrahteten entry_z/exit_z) --
     src/backtest/strategy.py: GarchWilksToleranceStrategy braucht z.B.
@@ -299,52 +294,9 @@ class TestGenericSearchSpace:
                 calibration_range=calibration_range, fold_days=1, n_trials=1, use_persistent_storage=False,
                 search_space={"does_not_exist": (1.0, 2.0)},
             )
-#!####################
 
 
-class TestTuneAllBasketsAndOverrides:
-    def test_build_basket_overrides_from_tune_all_baskets(self, synthetic_panel, timeline):
-        idx = synthetic_panel["close"].index
-        calibration_range = DateRange(idx[0], idx[0] + pd.Timedelta(days=4))
 
-        results = tune_all_baskets(
-            baskets=("Basket 1",), panel=synthetic_panel, timeline=timeline, base_params=_tiny_params(),
-            calibration_range=calibration_range, fold_days=1, n_trials=2, use_persistent_storage=False,
-            min_trades_per_fold=0.0,
-        )
-        overrides = build_basket_overrides(results)
-
-        assert set(overrides) == {"Basket 1"}
-        assert set(overrides["Basket 1"]) == {"entry_z", "exit_z"}
-
-    def test_seed_is_offset_per_basket(self, synthetic_panel, timeline, monkeypatch):
-        """Regressionstest fuer den Seed-Kollisions-Bug: identischer Seed +
-        identischer Suchraum liess alle Baskets dieselbe Trial-Sequenz ziehen
-        (siehe tune_all_baskets-Docstring). tune_basket_params selbst wird
-        hier NICHT ausgefuehrt (kein echter Optuna-Lauf) -- nur geprueft,
-        dass tune_all_baskets pro Basket einen ansteigenden seed uebergibt."""
-        calls = []
-
-        class _FakeStudy:
-            best_value = 0.0
-
-        def _fake_tune_basket_params(*, basket, seed, **kwargs):
-            calls.append((basket, seed))
-            return TuningResult(basket=basket, study=_FakeStudy(), trials_df=pd.DataFrame(), best_params={}, folds=[])
-
-        monkeypatch.setattr("src.backtest.tuning.tune_basket_params", _fake_tune_basket_params)
-
-        idx = synthetic_panel["close"].index
-        calibration_range = DateRange(idx[0], idx[0] + pd.Timedelta(days=4))
-        tune_all_baskets(
-            baskets=("Basket 1", "Basket 2", "Basket 3"), panel=synthetic_panel, timeline=timeline,
-            base_params=_tiny_params(), calibration_range=calibration_range, seed=100,
-        )
-
-        assert calls == [("Basket 1", 100), ("Basket 2", 101), ("Basket 3", 102)]
-
-
-#!#################### NEU
 class TestSaveTuningResults:
     """save_tuning_results fehlte komplett -- 05_tuning.ipynb rief
     bt_tuning.save_tuning_results(...) auf und brach mit AttributeError ab."""
@@ -381,7 +333,7 @@ class TestSaveTuningResults:
         run_dir = save_tuning_results({"Basket 1": empty_result}, label="empty", tuning_dir=tmp_path)
         assert not (run_dir / "trials_basket-1.parquet").exists()
 
-    #!#################### NEU
+    
     def test_stores_candle_minutes_per_basket(self, tmp_path):
         run_dir = save_tuning_results(
             {"Basket 1": self._fake_result("Basket 1")}, label="15min run", tuning_dir=tmp_path, candle_minutes=15,
@@ -409,11 +361,11 @@ class TestSaveTuningResults:
         import json
         payload = json.loads((run_dir / "best_params.json").read_text())
         assert payload["Basket 1"]["fee_preset"] is None
-    #!####################
-#!####################
+    
 
 
-#!#################### NEU
+
+
 class TestLoadAllTuningResults:
     def _fake_result(self, basket="Basket 1"):
         class _FakeStudy:
@@ -428,7 +380,7 @@ class TestLoadAllTuningResults:
     def test_empty_dir_returns_empty_dataframe_with_columns(self, tmp_path):
         df = load_all_tuning_results(tuning_dir=tmp_path / "does_not_exist")
         assert df.empty
-        assert list(df.columns) == ["run_id", "basket", "candle_minutes", "fee_preset", "best_objective", "n_trials", "n_folds", "best_params"]
+        assert list(df.columns) == ["run_id", "basket", "candle_minutes", "fee_preset", "best_objective", "n_trials", "n_folds", "best_params", "fixed_overrides"]
 
     def test_aggregates_across_multiple_runs_and_candle_minutes(self, tmp_path):
         save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="5min", tuning_dir=tmp_path, candle_minutes=5)
@@ -448,18 +400,17 @@ class TestLoadAllTuningResults:
         df = load_all_tuning_results(tuning_dir=tmp_path)
         assert len(df) == 1
 
-    #!#################### NEU
+    
     def test_aggregates_fee_preset(self, tmp_path):
         save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="standard", tuning_dir=tmp_path, fee_preset="standard")
         save_tuning_results({"Basket 1": self._fake_result("Basket 1")}, label="zero cost", tuning_dir=tmp_path, fee_preset="zero_cost")
 
         df = load_all_tuning_results(tuning_dir=tmp_path)
         assert set(df["fee_preset"]) == {"standard", "zero_cost"}
-    #!####################
-#!####################
+    
 
 
-#!#################### NEU
+
 class TestOptunaDashboard:
     """ensure_dashboard_running, portiert aus
     notebooks/03_Tradeing/tuning_common.py (Modul jetzt geloescht)."""
@@ -480,4 +431,4 @@ class TestOptunaDashboard:
         url = ensure_dashboard_running(tmp_path / "doesnotexist.db", port=8199, open_browser=False)
         assert url == "http://localhost:8199/"
         assert "nicht gefunden" in capsys.readouterr().out
-#!####################
+

@@ -46,25 +46,6 @@ class TestCliqueTimelineFromCache:
         assert timeline.snapshots("Basket 2") == []
 
 
-class TestActiveAt:
-    def test_none_before_first_available_from(self, timeline):
-        snap = timeline.snapshots("Basket 1")[0]
-        before = snap.available_from - pd.Timedelta(minutes=5)
-        assert timeline.active_at("Basket 1", before) is None
-
-    def test_active_exactly_at_available_from(self, timeline):
-        snap = timeline.snapshots("Basket 1")[0]
-        assert timeline.active_at("Basket 1", snap.available_from) is snap
-
-    def test_none_after_valid_until(self, timeline):
-        snap = timeline.snapshots("Basket 1")[0]
-        after = snap.valid_until + pd.Timedelta(minutes=5)
-        result = timeline.active_at("Basket 1", after)
-        # Am naechsten Tag existiert normalerweise schon ein neuerer Snapshot,
-        # der eigentliche Guard ist: es ist NICHT mehr der alte snap.
-        assert result is not snap
-
-
 class TestTimelineCursor:
     def test_detects_membership_change(self, tmp_path, price_index, symbol_to_id, symbols):
         # Zwei Haelften mit unterschiedlicher Mitgliedschaft

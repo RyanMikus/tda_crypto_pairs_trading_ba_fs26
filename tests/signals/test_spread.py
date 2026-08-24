@@ -1,7 +1,6 @@
 """Tests für src/signals/spread.py -- die Bausteine, auf denen
-PairwiseZScoreStrategy und ClusterSpreadStrategy aufbauen. Ein Regressionsfehler
-hier würde sich still in jeden Backtest fortpflanzen, deshalb eigene, von der
-Engine unabhängige Tests."""
+PairwiseZScoreStrategy aufbaut. Ein Regressionsfehler hier würde sich still in
+jeden Backtest fortpflanzen, deshalb eigene, von der Engine unabhängige Tests."""
 
 import numpy as np
 import pandas as pd
@@ -75,57 +74,6 @@ class TestEvaluateSpreadQuality:
         trending = pd.Series(np.arange(500, dtype=float) + rng.normal(0, 1, 500))
         diag = sp.evaluate_spread_quality(trending)
         assert not diag["adf_stationary"]
-
-
-class TestNormalizeCointegrationVector:
-    def test_largest_weight_becomes_positive(self):
-        weights = pd.Series([-0.5, 0.1, -0.05], index=["A", "B", "C"])
-        normalized = sp.normalize_cointegration_vector(weights)
-        assert normalized["A"] > 0
-
-    def test_flipping_all_signs_gives_identical_result(self):
-        """Kernproblem, das die Funktion loesen soll: Johansen-Eigenvektoren
-        haben beliebiges Vorzeichen -- (w) und (-w) muessen auf denselben
-        normierten Spread abgebildet werden."""
-        weights = pd.Series([-0.5, 0.1, -0.05], index=["A", "B", "C"])
-        normalized_a = sp.normalize_cointegration_vector(weights)
-        normalized_b = sp.normalize_cointegration_vector(-weights)
-        pd.testing.assert_series_equal(normalized_a, normalized_b)
-
-    def test_result_sums_abs_to_one(self):
-        weights = pd.Series([2.0, -1.0, 0.5], index=["A", "B", "C"])
-        normalized = sp.normalize_cointegration_vector(weights)
-        assert normalized.abs().sum() == pytest.approx(1.0)
-
-    def test_scaling_input_does_not_change_result(self):
-        weights = pd.Series([2.0, -1.0, 0.5], index=["A", "B", "C"])
-        pd.testing.assert_series_equal(
-            sp.normalize_cointegration_vector(weights),
-            sp.normalize_cointegration_vector(weights * 100),
-        )
-
-
-class TestJohansenAndClusterSpread:
-    def test_compute_johansen_test_detects_relation_in_cointegrated_system(self):
-        idx = pd.date_range("2025-01-01", periods=800, freq="5min", tz="UTC")
-        rng = np.random.default_rng(5)
-        common = rng.normal(0, 1, len(idx)).cumsum()
-        df = pd.DataFrame({
-            "A": np.exp(0.01 * common + 4.0 + rng.normal(0, 0.01, len(idx))),
-            "B": np.exp(0.02 * common + 3.0 + rng.normal(0, 0.01, len(idx))),
-            "C": np.exp(rng.normal(0, 1, len(idx)).cumsum() * 0.01 + 2.0),
-        }, index=idx)
-
-        result = sp.compute_johansen_test(df)
-        assert result["n_coint_relations"] >= 1
-        assert set(result["eigenvectors"].index) == {"A", "B", "C"}
-
-    def test_build_cluster_spread_matches_manual_weighted_sum(self):
-        df = pd.DataFrame({"A": [100.0, 110.0], "B": [50.0, 55.0]})
-        weights = pd.Series({"A": 0.6, "B": -0.4})
-        spread = sp.build_cluster_spread(df, weights)
-        expected = 0.6 * np.log(df["A"]) - 0.4 * np.log(df["B"])
-        np.testing.assert_allclose(spread.to_numpy(), expected.to_numpy())
 
 
 class TestRealizedVolOfSpreadReturns:

@@ -24,7 +24,6 @@ STABLECOIN_SYMBOLS: set[str] = {
 }
 
 
-
 # Helper Functions
 #ignore type warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="scipy")
@@ -33,7 +32,7 @@ class HelperFunctions:
 
     def __init__(self):
         pass
-    
+
     @staticmethod
     def correlation_distance(returns_window: pd.DataFrame) -> np.ndarray:
         """Berechnet die paarweise Korrelationsdistanz zwischen Assets.
@@ -60,8 +59,6 @@ class HelperFunctions:
         np.fill_diagonal(dist, 0.0)
         return dist
 
-
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def get_universe_asset_ids_for_date(universe_df: pd.DataFrame, end_date: pd.Timestamp) -> list[int]:
         """Gibt alle Asset-IDs zurück, die am angegebenen Datum im Universum sind.
@@ -92,7 +89,6 @@ class HelperFunctions:
         )
         return asset_ids
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def build_point_cloud(
         ohlcv_df: pd.DataFrame,
@@ -227,7 +223,6 @@ class HelperFunctions:
             "end_date": end_date,
         }
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def get_persistent_clusters(
         dist_matrix: np.ndarray,
@@ -339,7 +334,6 @@ class HelperFunctions:
         }
         return [cluster], z
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def get_all_node_persistences(
         dist_matrix: np.ndarray,
@@ -403,7 +397,6 @@ class HelperFunctions:
 
         return persistences
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def residualize_returns(
         returns_df: pd.DataFrame,
@@ -451,7 +444,6 @@ class HelperFunctions:
 
         return pd.DataFrame(residuals, index=returns_df.index)
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def build_residual_point_cloud(
         ohlcv_df: pd.DataFrame,
@@ -573,7 +565,6 @@ class HelperFunctions:
             "end_date": end_ts,
         }
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def compute_rolling_volume_table(
         asset_daily_df: pd.DataFrame,
@@ -629,7 +620,6 @@ class HelperFunctions:
 
         return volume_df
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def assign_volume_basket(
         volume: float,
@@ -667,7 +657,6 @@ class HelperFunctions:
 
         return "Basket 1"
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def build_volume_baskets(
         rolling_volume_df: pd.DataFrame,
@@ -714,7 +703,6 @@ class HelperFunctions:
 
         return basket_df
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def compare_baskets(
         previous_basket_df: pd.DataFrame,
@@ -792,7 +780,6 @@ class HelperFunctions:
 
         return comparison_df, left_df, transition_df
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def build_basket_comparison(
         rolling_volume_df: pd.DataFrame,
@@ -847,7 +834,6 @@ class HelperFunctions:
             transition_df,
         )
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def describe_volume_baskets(
         basket_upper_bounds: list[float],
@@ -880,7 +866,6 @@ class HelperFunctions:
 
         return lines
 
-    #! WIRD NICHT MEHR GEBRAUCHT
     @staticmethod
     def discover_cliques_over_dates(
         *,

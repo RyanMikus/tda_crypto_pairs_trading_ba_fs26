@@ -4,7 +4,6 @@ import pytest
 
 from src.backtest.config import BasketParams
 from src.backtest.strategy import (
-    ClusterSpreadStrategy,
     PairwiseZScoreStrategy,
     StrategyState,
     build_strategy,
@@ -312,9 +311,6 @@ class TestStrategyRegistry:
     def test_build_strategy_pairwise(self):
         assert isinstance(build_strategy("pairwise_zscore"), PairwiseZScoreStrategy)
 
-    def test_build_strategy_cluster(self):
-        assert isinstance(build_strategy("cluster_johansen"), ClusterSpreadStrategy)
-
     def test_unknown_strategy_raises(self):
         with pytest.raises(ValueError):
             build_strategy("does_not_exist")
@@ -392,24 +388,3 @@ class TestPairwiseBuildDefinitions:
         assert state.definitions, "Formation sollte mindestens eine Definition liefern"
         assert state.definitions[0].diagnostics["clique_persistence"] == 0.77
         assert state.definitions[0].diagnostics["clique_size"] == 4
-
-
-class TestClusterBuildDefinitions:
-    def test_runs_without_crashing(self, synthetic_panel):
-        strategy = ClusterSpreadStrategy()
-        params = BasketParams(
-            min_johansen_relations=1, min_half_life_candles=1, max_half_life_candles=10_000,
-            require_adf=True, adf_alpha=0.1,
-        )
-        window = synthetic_panel["close"].iloc[:800]
-        snapshot = _FakeSnapshot(window.columns, [1, 2, 3, 4])
-
-        definitions, rejected = strategy.build_definitions(snapshot=snapshot, window=window, params=params)
-
-        if definitions:
-            d = definitions[0]
-            assert d.kind == "cluster"
-            assert len(d.weights) == len(d.symbols) == len(d.asset_ids)
-            assert sum(abs(w) for w in d.weights) == pytest.approx(1.0)
-        else:
-            assert rejected  # muss einen Ablehnungsgrund dokumentieren, nicht stillschweigend leer sein

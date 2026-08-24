@@ -26,10 +26,9 @@ def split_calibration_backtest(
     full_start, full_end, fraction: float = 0.2,
 ) -> tuple[DateRange, DateRange]:
     """Teilt [full_start, full_end] in einen Calibration- und einen Backtest-
-    Zeitraum, nach demselben Muster wie BACKTEST_FRACTION in
-    notebooks/03_signal_generation/01_forward_return_screening.ipynb: die
-    letzten `fraction` des verfügbaren Zeitraums sind der Backtest/Test-
-    Zeitraum (nie für Kalibrierung angefasst), der Rest ist Calibration.
+    Zeitraum: die letzten `fraction` des verfügbaren Zeitraums sind der
+    Backtest/Test-Zeitraum (nie für Kalibrierung angefasst), der Rest ist
+    Calibration.
 
     Returns:
         (calibration_range, backtest_range), beide als DateRange(start, end).
@@ -134,7 +133,7 @@ class BasketParams:
     max_half_life_candles: float = 288 * 2
     min_johansen_relations: int = 1
 
-    
+
     # --- Positionslimits ---
     min_holding_candles: int = 1
     max_concurrent_positions: int = 3

@@ -208,18 +208,6 @@ def metrics_by_basket(trades: pd.DataFrame, config: "BacktestConfig") -> pd.Data
     return pd.DataFrame(rows).set_index("basket")
 
 
-#! WIRD NICHT MEHR GEBRAUCHT
-def metrics_by_exit_reason(trades: pd.DataFrame) -> pd.DataFrame:
-    if trades.empty:
-        return pd.DataFrame()
-    return trades.groupby("exit_reason").agg(
-        n_trades=("net_pnl", "count"),
-        total_net_pnl=("net_pnl", "sum"),
-        avg_net_pnl=("net_pnl", "mean"),
-        avg_holding_hours=("holding_hours", "mean"),
-    )
-
-
 def compute_all_metrics(
     *, equity_curve: pd.DataFrame, trades: pd.DataFrame,
     benchmark_close: pd.Series | None, config: "BacktestConfig",

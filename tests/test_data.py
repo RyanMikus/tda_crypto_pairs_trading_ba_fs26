@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from src.config import OHLCV_DIR
-from src.data import available_data_range, full_candle_index, load_ohlcv_panel, resample_ohlcv_panel
+from src.data import full_candle_index, load_ohlcv_panel, resample_ohlcv_panel
 
 
 def _write_month(tmp_path, year, month, start_day, n_candles):
@@ -12,24 +12,13 @@ def _write_month(tmp_path, year, month, start_day, n_candles):
     df.to_parquet(tmp_path / f"ohlcv_{year:04d}-{month:02d}.parquet", index=False)
 
 
-class TestAvailableDataRange:
-    def test_single_file(self, tmp_path):
-        _write_month(tmp_path, 2024, 7, 23, 10)
-        lo, hi = available_data_range(ohlcv_dir=tmp_path)
-        assert lo == pd.Timestamp("2024-07-23", tz="UTC")
-        assert hi == pd.Timestamp("2024-07-23", tz="UTC") + pd.Timedelta(minutes=5 * 9)
-
-    def test_multiple_files_uses_first_and_last(self, tmp_path):
-        _write_month(tmp_path, 2024, 7, 23, 5)
-        _write_month(tmp_path, 2024, 8, 1, 5)
-        _write_month(tmp_path, 2024, 9, 1, 5)
-        lo, hi = available_data_range(ohlcv_dir=tmp_path)
-        assert lo == pd.Timestamp("2024-07-23", tz="UTC")
-        assert hi == pd.Timestamp("2024-09-01", tz="UTC") + pd.Timedelta(minutes=5 * 4)
-
-    def test_raises_when_no_files(self, tmp_path):
-        with pytest.raises(FileNotFoundError):
-            available_data_range(ohlcv_dir=tmp_path)
+def _real_data_start() -> pd.Timestamp:
+    """Frühester Zeitstempel der chronologisch ersten vorhandenen ohlcv_*.parquet-Datei
+    -- ersetzt das inzwischen entfernte src.data.available_data_range nur für die
+    Real-Data-Fixtures unten, die lediglich einen gültigen Startpunkt brauchen."""
+    files = sorted(OHLCV_DIR.glob("ohlcv_*.parquet"))
+    first = pd.read_parquet(files[0], columns=["timestamp"])
+    return pd.to_datetime(first["timestamp"], utc=True).min()
 
 
 def _five_min_panel(n=13):
@@ -116,12 +105,6 @@ class TestResampleOhlcvPanel:
             resample_ohlcv_panel(panel, source_minutes=5, target_minutes=0)
 
 
-#!#################### NEU: End-to-End-Kontrolle der Kerzenumwandlung auf
-#!#################### ECHTEN Repo-Rohdaten (TestResampleOhlcvPanel oben
-#!#################### deckt nur synthetische, isolierte Faelle ab) --
-#!#################### uebersprungen statt fehlgeschlagen, falls die grossen
-#!#################### OHLCV-Rohdaten lokal nicht vorhanden sind (z.B. CI
-#!#################### ohne data/raw/).
 @pytest.mark.skipif(not OHLCV_DIR.exists(), reason="OHLCV-Rohdaten (data/raw/fetched/asset_ohlcv_5m/) nicht vorhanden")
 class TestResampleOhlcvPanelOnRealData:
     """Laedt ein kleines echtes 5-Min-Zeitfenster (load_ohlcv_panel) und
@@ -130,7 +113,7 @@ class TestResampleOhlcvPanelOnRealData:
 
     @pytest.fixture(scope="class")
     def real_panel_5m(self):
-        start, end = available_data_range()
+        start = _real_data_start()
         symbols = None  # erste paar Symbole im Zeitraum reichen, siehe load_symbol_map-Reihenfolge
         panel = load_ohlcv_panel(
             start=start, end=start + pd.Timedelta(hours=6),
@@ -186,17 +169,7 @@ class TestResampleOhlcvPanelOnRealData:
         pd.testing.assert_series_equal(
             out["volume_base"].sum(), real_panel_5m["volume_base"].sum(), check_names=False,
         )
-#!####################
 
-
-#!#################### NEU: Luecken-/Sprungfreiheit der 5-Min-ROHDATEN selbst
-#!#################### -- gehoert NICHT zu TestResampleOhlcvPanelOnRealData
-#!#################### (das prueft die Aggregation, nicht die Rohdatenqualitaet).
-#!#################### close(t) sollte nahe an open(t+1) liegen, WENN die
-#!#################### 5-Min-Kerzen tatsaechlich lueckenlos aneinanderhaengen
-#!#################### -- grosse Abweichungen deuten auf fehlende Kerzen oder
-#!#################### Datenfehler hin, nicht auf normales Marktrauschen
-#!#################### (das waere INNERHALB einer Kerze, nicht am Uebergang).
 @pytest.mark.skipif(not OHLCV_DIR.exists(), reason="OHLCV-Rohdaten (data/raw/fetched/asset_ohlcv_5m/) nicht vorhanden")
 class TestRawPanelCandleContinuity:
     """Prueft, dass aufeinanderfolgende 5-Min-Rohkerzen (load_ohlcv_panel)
@@ -208,7 +181,7 @@ class TestRawPanelCandleContinuity:
     @classmethod
     @pytest.fixture(scope="class")
     def real_panel_5m(cls):
-        start, _ = available_data_range()
+        start = _real_data_start()
         panel = load_ohlcv_panel(
             start=start, end=start + pd.Timedelta(hours=6),
             fields=("open", "close"),
@@ -232,4 +205,4 @@ class TestRawPanelCandleContinuity:
         rel_gap = ((open_t_plus_1 - close_t) / close_t).abs()
         max_gap = rel_gap.max().max()
         assert max_gap < 0.05, f"groesste relative Luecke close(t)->open(t+1): {max_gap:.4%} (>5%, moegliche Datenluecke)"
-#!####################
+

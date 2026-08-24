@@ -195,16 +195,6 @@ class CliqueTimeline:
         """Sortiert nach available_from."""
         return self._snapshots_by_basket.get(basket, [])
 
-    #! WIRD NICHT MEHR GEBRAUCHT
-    def active_at(self, basket: str, ts: pd.Timestamp) -> CliqueSnapshot | None:
-        snaps = self.snapshots(basket)
-        avail = [s.available_from for s in snaps]
-        idx = bisect.bisect_right(avail, ts) - 1
-        if idx < 0:
-            return None
-        snap = snaps[idx]
-        return snap if snap.valid_until >= ts else None
-
     def coverage(self) -> pd.DataFrame:
         rows = []
         for basket, snaps in self._snapshots_by_basket.items():
@@ -219,19 +209,6 @@ class CliqueTimeline:
                 "interval": self.infer_interval(basket),
             })
         return pd.DataFrame(rows)
-
-    #! WIRD NICHT MEHR GEBRAUCHT
-    def meta(self) -> dict:
-        return self._meta
-
-    def describe(self) -> str:
-        lines = [f"Discovery-Intervall (Median über Baskets): {self._interval}"]
-        for _, row in self.coverage().iterrows():
-            lines.append(
-                f"  {row['basket']}: {row['n_snapshots']} Snapshots, "
-                f"{row['first']} → {row['last']}, Intervall {row['interval']}"
-            )
-        return "\n".join(lines)
 
 
 class TimelineCursor:
