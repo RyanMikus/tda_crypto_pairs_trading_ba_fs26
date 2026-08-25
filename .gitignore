@@ -49,5 +49,3 @@ data/processed/tuning/*
 
 # Noch nicht fuer den Push vorgesehen (work in progress)
 bachelorarbeit/
-notebooks/BA_visualizations.ipynb
-images/
