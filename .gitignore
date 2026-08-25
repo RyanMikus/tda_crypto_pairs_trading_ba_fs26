@@ -32,7 +32,7 @@ data/raw/cache/
 data/processed/plots/
 data/processed/features/
 
-# Backtest run artifacts (regenerable via 04_backtest/*.ipynb) -- nur der
+# Backtest run artifacts (regenerable via 03_backtest/*.ipynb) -- nur der
 # leichtgewichtige Index bleibt getrackt (data/processed/backtests/_index.parquet),
 # damit die Run-Historie im Repo nachvollziehbar bleibt, ohne die schweren
 # equity_curve/trades-Parquets pro Run mitzupushen.
@@ -46,6 +46,3 @@ data/processed/backtests/*/
 # wuerde den Ordner komplett blocken, Datei-Ausnahmen darin waeren wirkungslos).
 data/processed/tuning/*
 !data/processed/tuning/README.md
-
-# Noch nicht fuer den Push vorgesehen (work in progress)
-bachelorarbeit/
