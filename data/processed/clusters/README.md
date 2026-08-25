@@ -29,6 +29,7 @@ segmentiert, siehe `src/config.py::BASKET_UPPER_BOUNDS`-Äquivalent), `asset_ids
 
 Lauf-Parameter des Discovery-Prozesses: `variant`, `cadence_hours`, `epsilon_cap`,
 `basket_upper_bounds` (Markt-Cap-Grenzen der Baskets), `date_range`, `date_stride`,
-sowie `best_lookback`/`best_threshold` pro Basket (aus einer vorgelagerten
-Sensitivitätsanalyse übernommene, theoriegeleitet fixierte Werte — siehe
-`notebooks/02_tda_clustering/01_baskets.ipynb`).
+sowie `best_lookback`/`best_threshold` pro Basket (fest hinterlegte Werte, siehe
+`notebooks/02_tda_clustering/02_pointclouds.ipynb`/`03_residual_pointclouds.ipynb`,
+Abschnitt 4 — die dortige Jaccard-Stabilitätsanalyse liefert ergänzende Einblicke,
+ist aber kein alleiniges Auswahlkriterium).
