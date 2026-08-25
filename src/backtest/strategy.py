@@ -3,9 +3,9 @@
 Der Trick der Austauschbarkeit (Pairwise vs. Cluster-Spread, vom Nutzer als
 pluggable Strategy-Interface gefordert): Entry-/Exit-Logik über den Z-Score
 ist für BEIDE identisch (BaseSpreadZScoreStrategy). Der einzige Unterschied
-ist, WIE aus einer Clique SpreadDefinitions entstehen -- genau das ist die
+ist, WIE aus einem Cluster SpreadDefinitions entstehen -- genau das ist die
 eine abstrakte Methode `build_definitions`. Für die Engine ist "eine Position
-pro Paar" vs. "eine Position pro Clique" dadurch kein Sonderfall, sondern nur
+pro Paar" vs. "eine Position pro Cluster" dadurch kein Sonderfall, sondern nur
 eine andere Länge der von build_definitions zurückgegebenen Liste.
 """
 
@@ -18,7 +18,7 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from src.backtest.cliques import CliqueSnapshot
+from src.backtest.clusters import ClusterSnapshot
 from src.backtest.config import BasketParams
 from src.backtest.types import BarContext, EntrySignal, ExitDecision, NO_EXIT, Position, SpreadDefinition
 
@@ -39,7 +39,7 @@ class SignalStrategy(Protocol):
     def required_history_candles(self, params: BasketParams) -> int: ...
 
     def on_snapshot(
-        self, *, snapshot: CliqueSnapshot, ctx: BarContext, params: BasketParams,
+        self, *, snapshot: ClusterSnapshot, ctx: BarContext, params: BasketParams,
     ) -> StrategyState: ...
 
     def generate_entries(
@@ -118,7 +118,7 @@ class BaseSpreadZScoreStrategy(ABC):
 
     @abstractmethod
     def build_definitions(
-        self, *, snapshot: CliqueSnapshot, window: pd.DataFrame, params: BasketParams,
+        self, *, snapshot: ClusterSnapshot, window: pd.DataFrame, params: BasketParams,
         regime_window: pd.DataFrame | None = None,
     ) -> tuple[list[SpreadDefinition], list[dict]]:
         """window: Preis-DataFrame (formation_window_candles x symbols),
@@ -129,7 +129,7 @@ class BaseSpreadZScoreStrategy(ABC):
         wenn dynamic_threshold_enabled/dynamic_sizing_enabled aktiv sind."""
 
     def on_snapshot(
-        self, *, snapshot: CliqueSnapshot, ctx: BarContext, params: BasketParams,
+        self, *, snapshot: ClusterSnapshot, ctx: BarContext, params: BasketParams,
     ) -> StrategyState:
         window = ctx.prices.history(snapshot.symbols, params.formation_window_candles, field="close")
         regime_window = None
@@ -140,11 +140,11 @@ class BaseSpreadZScoreStrategy(ABC):
             snapshot=snapshot, window=window, params=params, regime_window=regime_window,
         )
         for definition in definitions:
-            # Clique-Diagnostik aus dem Snapshot in die SpreadDefinition durchreichen,
+            # Cluster-Diagnostik aus dem Snapshot in die SpreadDefinition durchreichen,
             # damit sie später im Trade-Log landet (trades.parquet: persistence,
-            # clique_size) -- der direkte Brückenschlag zurück zur TDA-Fragestellung.
-            definition.diagnostics.setdefault("clique_persistence", snapshot.persistence)
-            definition.diagnostics.setdefault("clique_size", snapshot.size)
+            # cluster_size) -- der direkte Brückenschlag zurück zur TDA-Fragestellung.
+            definition.diagnostics.setdefault("cluster_persistence", snapshot.persistence)
+            definition.diagnostics.setdefault("cluster_size", snapshot.size)
             definition.diagnostics.setdefault("lookback_days", snapshot.lookback_days)
         return StrategyState(
             membership_key=snapshot.membership_key,
@@ -244,8 +244,8 @@ def _quality_filter(diag: dict, params: BasketParams) -> tuple[bool, str | None]
 
 
 class PairwiseZScoreStrategy(BaseSpreadZScoreStrategy):
-    """Bildet aus einer Clique alle Ticker-Paare, filtert per Korrelation vor
-    (Cliquen mit bis zu 19 Assets ergäben sonst bis zu 171 Paare -- die volle
+    """Bildet aus einem Cluster alle Ticker-Paare, filtert per Korrelation vor
+    (Clustern mit bis zu 19 Assets ergäben sonst bis zu 171 Paare -- die volle
     ADF/KPSS/Hurst-Diagnostik auf allen wäre der Performance-Killer), prüft
     die Top-Kandidaten per analyze_spread_stationarity und behält die
     schnellsten (niedrigste Half-Life) bis max_candidate_pairs."""
@@ -253,7 +253,7 @@ class PairwiseZScoreStrategy(BaseSpreadZScoreStrategy):
     name = "pairwise_zscore"
 
     def build_definitions(
-        self, *, snapshot: CliqueSnapshot, window: pd.DataFrame, params: BasketParams,
+        self, *, snapshot: ClusterSnapshot, window: pd.DataFrame, params: BasketParams,
         regime_window: pd.DataFrame | None = None,
     ) -> tuple[list[SpreadDefinition], list[dict]]:
         from src.signals import spread as sp

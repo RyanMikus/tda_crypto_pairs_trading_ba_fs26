@@ -38,7 +38,7 @@ def estimate_hedge_ratio(price_df: pd.DataFrame, ticker_1: str, ticker_2: str) -
     Zeilen, an denen ticker_1 oder ticker_2 NaN ist (z.B. weil ein Asset im
     price_df-Fenster noch nicht gelistet war), werden vor der Regression
     entfernt -- sonst bricht OLS mit "exog contains inf or nans" ab, sobald
-    ein Clique-Mitglied eine Datenlücke hat (siehe TestHedgeRatioAndSpread).
+    ein Cluster-Mitglied eine Datenlücke hat (siehe TestHedgeRatioAndSpread).
     """
     log_p1 = np.log(price_df[ticker_1]).to_numpy()
     log_p2 = np.log(price_df[ticker_2]).to_numpy()
@@ -196,7 +196,7 @@ def compute_realized_vol_regime(
     Rollierende Std der Spread-Returns ueber rv_lookback_candles Kerzen (m),
     dann Median/Perzentile dieser RV-Reihe ueber den GESAMTEN uebergebenen
     price_df-Zeitraum (N, typischerweise vol_regime_percentile_window_candles
-    + rv_lookback_candles Kerzen). Gedacht, EINMAL pro Clique-Snapshot
+    + rv_lookback_candles Kerzen). Gedacht, EINMAL pro Cluster-Snapshot
     berechnet zu werden (wie ADF/Half-Life), nicht pro Bar -- die
     Perzentilgrenzen sollen eine stabile, langsam wandernde Referenz sein,
     nur das aktuelle sigma_t (compute_spread_return_rv) ist live pro Bar.

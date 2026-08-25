@@ -1,7 +1,7 @@
-"""Liest den Clique-Cache (data/processed/cliques/) ein und macht ihn für die
+"""Liest den Cluster-Cache (data/processed/clusters/) ein und macht ihn für die
 Engine nutzbar -- bewusst AGNOSTISCH gegenüber dem Discovery-Intervall: es
 gibt sechs Cache-Varianten (roh/residualisiert x 6h/12h/24h, siehe
-04_clique_cache.ipynb), dieses Modul nimmt kein festes Intervall an. Deshalb:
+04_cluster_cache.ipynb), dieses Modul nimmt kein festes Intervall an. Deshalb:
 `discovery_timestamp` bleibt immer ein voller Timestamp, nie `.normalize()`
 oder `.date()` -- und das Intervall wird aus den Daten selbst inferiert
 (siehe `_infer_interval_from_series`/`infer_interval`).
@@ -9,11 +9,11 @@ oder `.date()` -- und das Intervall wird aus den Daten selbst inferiert
 Look-Ahead-Guard G1: HelperFunctions.build_point_cloud (src/clustering/
 helpers.py) filtert seit der Kadenz-Umstellung nach `TIMESTAMP_COL <=
 end_date` (kein `.normalize()` auf Mitternacht mehr, siehe dortiger
-"Look-Ahead-Hinweis") -- eine bei `end_date`=t discoverte Clique kennt damit
+"Look-Ahead-Hinweis") -- eine bei `end_date`=t discoverte Cluster kennt damit
 nur Kerzen bis einschliesslich t, nicht mehr wie früher den ganzen Kalendertag
 voraus. `availability_lag="auto"` (= das inferierte Discovery-Intervall,
 gedeckelt bei 1 Tag) bleibt trotzdem bestehen: sie kompensiert, dass die
-Clique-Zugehörigkeit selbst erst NACH dem Discovery-Zeitpunkt bekannt ist
+Cluster-Zugehörigkeit selbst erst NACH dem Discovery-Zeitpunkt bekannt ist
 (Publikationsverzug der Discovery-Pipeline), nicht mehr eine Mitternacht-
 Normierung.
 """
@@ -29,7 +29,7 @@ from typing import Literal
 
 import pandas as pd
 
-from src.config import CLIQUES_DIR
+from src.config import CLUSTERS_DIR
 
 
 def _membership_key(asset_ids) -> str:
@@ -53,7 +53,7 @@ def _median_timedelta(timedeltas: list[pd.Timedelta]) -> pd.Timedelta:
 
 
 @dataclass(frozen=True)
-class CliqueSnapshot:
+class ClusterSnapshot:
     discovery_timestamp: pd.Timestamp  # NIE normalize()/date() -- bleibt voller Timestamp
     available_from: pd.Timestamp  # discovery_timestamp + availability_lag
     valid_until: pd.Timestamp  # discovery_timestamp + max_snapshot_age
@@ -62,18 +62,18 @@ class CliqueSnapshot:
     symbols: tuple[str, ...]  # 1:1 parallel zu asset_ids (asset_ids[i] <-> symbols[i])
     dropped_asset_ids: tuple[int, ...]  # nicht auflösbare Assets, informativ, NICHT in asset_ids
     persistence: float  # = death - birth, NICHT epsilon* (siehe death unten)
-    death: float  # = epsilon* -- Distanz, bei der die Clique-Gruppe zum ersten Mal mit einem
+    death: float  # = epsilon* -- Distanz, bei der die Cluster-Gruppe zum ersten Mal mit einem
     # Nicht-Mitglied verschmelzen würde (gedeckelt bei epsilon_cap). Für
     # TopologicalBreakRule (src/backtest/exit_rules.py) relevant, NICHT persistence.
-    size: int  # Grösse der ORIGINAL discoverten Clique (kann > len(asset_ids) sein, falls Assets dropped wurden)
+    size: int  # Grösse der ORIGINAL discoverten Cluster (kann > len(asset_ids) sein, falls Assets dropped wurden)
     lookback_days: int
     membership_key: str  # sha1 über sorted(asset_ids), 12 Zeichen -- NACH dem Dropping berechnet
 
 
-class CliqueTimeline:
+class ClusterTimeline:
     def __init__(
         self,
-        snapshots_by_basket: dict[str, list[CliqueSnapshot]],
+        snapshots_by_basket: dict[str, list[ClusterSnapshot]],
         meta: dict,
         interval: pd.Timedelta,
     ) -> None:
@@ -92,9 +92,9 @@ class CliqueTimeline:
         baskets: list[str] | None = None,
         start: pd.Timestamp | None = None,
         end: pd.Timestamp | None = None,
-        cliques_dir: Path = CLIQUES_DIR,
-    ) -> "CliqueTimeline":
-        """Liest cliques_<variant>.parquet + .meta.json.
+        clusters_dir: Path = CLUSTERS_DIR,
+    ) -> "ClusterTimeline":
+        """Liest clusters_<variant>.parquet + .meta.json.
 
         Intervall-Agnostik (drei Regeln):
           1. discovery_date wird zu discovery_timestamp -- voller Timestamp,
@@ -105,14 +105,14 @@ class CliqueTimeline:
              tägliche Discovery sieht den ganzen Tag D).
           3. max_snapshot_age="auto" -> 2 * inferiertes Intervall. Ohne
              Ablauf würde ein Snapshot unbegrenzt aktiv bleiben, obwohl die
-             Abwesenheit eines Folgeeintrags "keine Clique gefunden" bedeutet.
+             Abwesenheit eines Folgeeintrags "kein Cluster gefunden" bedeutet.
         """
-        path = cliques_dir / f"cliques_{variant}.parquet"
-        meta_path = cliques_dir / f"cliques_{variant}.meta.json"
+        path = clusters_dir / f"clusters_{variant}.parquet"
+        meta_path = clusters_dir / f"clusters_{variant}.meta.json"
         if not path.exists():
             raise FileNotFoundError(
                 f"{path} nicht gefunden -- zuerst "
-                "notebooks/02_tda_clustering/04_clique_cache.ipynb laufen lassen."
+                "notebooks/02_tda_clustering/04_cluster_cache.ipynb laufen lassen."
             )
 
         df = pd.read_parquet(path)
@@ -133,7 +133,7 @@ class CliqueTimeline:
             interval_by_basket[basket] = cls._infer_interval_from_series(sub["discovery_date"])
         overall_interval = _median_timedelta(list(interval_by_basket.values()))
 
-        snapshots_by_basket: dict[str, list[CliqueSnapshot]] = {}
+        snapshots_by_basket: dict[str, list[ClusterSnapshot]] = {}
         for basket, sub in df.groupby("basket"):
             interval = interval_by_basket[basket]
             lag = availability_lag
@@ -155,7 +155,7 @@ class CliqueTimeline:
                         resolved_ids.append(a)
                         symbols.append(s)
                 ts = row.discovery_date
-                rows.append(CliqueSnapshot(
+                rows.append(ClusterSnapshot(
                     discovery_timestamp=ts,
                     available_from=ts + lag,
                     valid_until=ts + age,
@@ -191,7 +191,7 @@ class CliqueTimeline:
         ts_series = pd.Series([s.discovery_timestamp for s in snaps])
         return self._infer_interval_from_series(ts_series)
 
-    def snapshots(self, basket: str) -> list[CliqueSnapshot]:
+    def snapshots(self, basket: str) -> list[ClusterSnapshot]:
         """Sortiert nach available_from."""
         return self._snapshots_by_basket.get(basket, [])
 
@@ -224,12 +224,12 @@ class TimelineCursor:
     """Pro Basket ein monoton vorwärtslaufender Zeiger -- O(1) amortisiert pro
     Bar statt bisect bei jedem Aufruf über den ganzen Backtest."""
 
-    def __init__(self, timeline: CliqueTimeline, basket: str) -> None:
+    def __init__(self, timeline: ClusterTimeline, basket: str) -> None:
         self._snaps = timeline.snapshots(basket)
         self._pos = -1
-        self._current: CliqueSnapshot | None = None
+        self._current: ClusterSnapshot | None = None
 
-    def advance(self, ts: pd.Timestamp) -> tuple[CliqueSnapshot | None, bool]:
+    def advance(self, ts: pd.Timestamp) -> tuple[ClusterSnapshot | None, bool]:
         """(aktiver Snapshot, membership_changed) für Zeitpunkt ts.
 
         ts muss über aufeinanderfolgende Aufrufe monoton steigen (Bar-Loop)."""

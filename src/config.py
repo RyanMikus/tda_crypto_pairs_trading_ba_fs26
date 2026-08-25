@@ -12,7 +12,7 @@ ASSETS_PATH      = FETCHED_DIR / "assets.parquet"
 ASSET_DAILY_DIR  = FETCHED_DIR / "asset_daily"
 ASSET_DAILY_PATH = ASSET_DAILY_DIR / "asset_daily.parquet"
 OHLCV_DIR        = FETCHED_DIR / "asset_ohlcv_5m"
-CLIQUES_DIR      = PROCESSED_DIR / "cliques"
+CLUSTERS_DIR      = PROCESSED_DIR / "clusters"
 BACKTESTS_DIR    = PROCESSED_DIR / "backtests"
 TUNING_DIR       = PROCESSED_DIR / "tuning"
 

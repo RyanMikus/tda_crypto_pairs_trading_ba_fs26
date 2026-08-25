@@ -3,7 +3,7 @@
 Alle Ergebnisse, die aus den Rohdaten (`data/raw/`) abgeleitet sind — nichts hier wird von
 Hand editiert, alles ist über die jeweiligen Notebooks/Module reproduzierbar.
 
-- `cliques/` — TDA-Clique-Discovery-Ergebnisse (`notebooks/02_tda_clustering/04_clique_cache.ipynb`).
+- `clusters/` — TDA-Cluster-Discovery-Ergebnisse (`notebooks/02_tda_clustering/04_cluster_cache.ipynb`).
 - `tuning/` — Optuna-Hyperparameter-Suchläufe (`notebooks/03_backtest/03_tune_dynamic_vol.ipynb`,
   `src/backtest/tuning.py`). In `.gitignore` (lokale Zwischenergebnisse), einzelne Dateien
   können aber bewusst mit `git add -f` versioniert werden.

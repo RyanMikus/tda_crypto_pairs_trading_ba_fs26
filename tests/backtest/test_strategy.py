@@ -365,7 +365,7 @@ class TestPairwiseBuildDefinitions:
             assert d.diagnostics["rv_base"] > 0
             assert d.diagnostics["rv_low"] <= d.diagnostics["rv_base"] <= d.diagnostics["rv_high"]
 
-    def test_definition_carries_clique_diagnostics_after_on_snapshot(self, synthetic_panel, make_bar_context, make_price_window):
+    def test_definition_carries_cluster_diagnostics_after_on_snapshot(self, synthetic_panel, make_bar_context, make_price_window):
         strategy = PairwiseZScoreStrategy()
         params = BasketParams(
             formation_window_candles=800, pair_prefilter_top_n=6, max_candidate_pairs=2,
@@ -386,5 +386,5 @@ class TestPairwiseBuildDefinitions:
 
         state = strategy.on_snapshot(snapshot=snapshot, ctx=ctx, params=params)
         assert state.definitions, "Formation sollte mindestens eine Definition liefern"
-        assert state.definitions[0].diagnostics["clique_persistence"] == 0.77
-        assert state.definitions[0].diagnostics["clique_size"] == 4
+        assert state.definitions[0].diagnostics["cluster_persistence"] == 0.77
+        assert state.definitions[0].diagnostics["cluster_size"] == 4

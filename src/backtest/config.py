@@ -106,11 +106,11 @@ class BasketParams:
     # entfernt wurde, weil eine variable Pro-Position-Haltedauer sich nicht sinnvoll
     # als feste Tageszahl vorgeben liess. None deaktiviert den Hard-Cap.
     max_holding_days: float | None = 4.0
-    exit_on_clique_break: bool = True  # Mitgliedschaftswechsel beim nächsten Snapshot
+    exit_on_cluster_break: bool = True  # Mitgliedschaftswechsel beim nächsten Snapshot
     max_data_gap_candles: int = 6
     # Topologischer Struktur-Break-Detektor (Single-Linkage/fcluster bei ε*-δ, siehe
     # docs/project/woo_2026a_additional-information.pdf und exit_rules.TopologicalBreakRule).
-    # epsilon* = position.entry_death (eingefroren bei Entry aus CliqueSnapshot.death,
+    # epsilon* = position.entry_death (eingefroren bei Entry aus ClusterSnapshot.death,
     # NICHT persistence). topo_break_window_candles=None -> Default ist
     # position.entry_lookback_days in Kerzen umgerechnet (candles_per_day(candle_minutes),
     # siehe exit_rules.TopologicalBreakRule -- skaliert mit der Kerzengrösse des Runs).
@@ -220,7 +220,7 @@ class BacktestConfig:
     calibration_range: DateRange | None = None
     backtest_range: DateRange | None = None
     baskets: tuple[str, ...] = ("Basket 1", "Basket 2", "Basket 3", "Basket 4")
-    clique_variant: str = "raw_24h"  # z.B. "raw_6h"/"raw_12h"/"raw_24h"/"residual_6h"/"residual_12h"/"residual_24h"
+    cluster_variant: str = "raw_24h"  # z.B. "raw_6h"/"raw_12h"/"raw_24h"/"residual_6h"/"residual_12h"/"residual_24h"
 
     strategy_name: str = "pairwise_zscore"
     strategy_kwargs: dict = field(default_factory=dict)
@@ -232,7 +232,7 @@ class BacktestConfig:
     max_gross_exposure: float = 1.0
     max_total_positions: int = 12
 
-    clique_availability_lag: pd.Timedelta | Literal["auto"] = _TIMEDELTA_AUTO
+    cluster_availability_lag: pd.Timedelta | Literal["auto"] = _TIMEDELTA_AUTO
     max_snapshot_age: pd.Timedelta | Literal["auto"] = _TIMEDELTA_AUTO
     execution_lag_candles: int = 1
     fill_price_field: Literal["open", "close"] = "open"
@@ -275,7 +275,7 @@ class BacktestConfig:
             "calibration_range": asdict(self.calibration_range) if self.calibration_range else None,
             "backtest_range": asdict(self.backtest_range) if self.backtest_range else None,
             "baskets": list(self.baskets),
-            "clique_variant": self.clique_variant,
+            "cluster_variant": self.cluster_variant,
             "strategy_name": self.strategy_name,
             "strategy_kwargs": self.strategy_kwargs,
             "default_params": asdict(self.default_params),
@@ -284,7 +284,7 @@ class BacktestConfig:
             "initial_capital": self.initial_capital,
             "max_gross_exposure": self.max_gross_exposure,
             "max_total_positions": self.max_total_positions,
-            "clique_availability_lag": self.clique_availability_lag,
+            "cluster_availability_lag": self.cluster_availability_lag,
             "max_snapshot_age": self.max_snapshot_age,
             "execution_lag_candles": self.execution_lag_candles,
             "fill_price_field": self.fill_price_field,
@@ -311,7 +311,7 @@ class BacktestConfig:
             calibration_range=_range(d.get("calibration_range")),
             backtest_range=_range(d.get("backtest_range")),
             baskets=tuple(d.get("baskets", ("Basket 1", "Basket 2", "Basket 3", "Basket 4"))),
-            clique_variant=d.get("clique_variant", "raw_24h"),
+            cluster_variant=d.get("cluster_variant", "raw_24h"),
             strategy_name=d.get("strategy_name", "pairwise_zscore"),
             strategy_kwargs=d.get("strategy_kwargs", {}),
             default_params=BasketParams(**d.get("default_params", {})),
@@ -319,7 +319,7 @@ class BacktestConfig:
             initial_capital=d.get("initial_capital", 100_000.0),
             max_gross_exposure=d.get("max_gross_exposure", 1.0),
             max_total_positions=d.get("max_total_positions", 12),
-            clique_availability_lag=d.get("clique_availability_lag", _TIMEDELTA_AUTO),
+            cluster_availability_lag=d.get("cluster_availability_lag", _TIMEDELTA_AUTO),
             max_snapshot_age=d.get("max_snapshot_age", _TIMEDELTA_AUTO),
             execution_lag_candles=d.get("execution_lag_candles", 1),
             fill_price_field=d.get("fill_price_field", "open"),

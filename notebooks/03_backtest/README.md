@@ -62,6 +62,6 @@ Jedes Notebook druckt vor dem Lauf `engine.describe_guards()` aus (G1–G8, sieh
 Regeln in fester Reihenfolge an: `DataGapRule`, `StopLossRule`,
 `TopologicalBreakRule` (Single-Linkage + `fcluster` bei `ε* − δ`, siehe
 `docs/project/woo_2026a_additional-information.pdf`; standardmässig AUS über
-`BasketParams.topo_break_enabled`), `MaxHoldingDaysRule`, `CliqueBreakRule`.
+`BasketParams.topo_break_enabled`), `MaxHoldingDaysRule`, `ClusterBreakRule`.
 Weitere Regeln lassen sich als zusätzliches `ExitRule`-Objekt in die Kette
 einhängen, ohne `engine.py` zu ändern.

@@ -1,9 +1,9 @@
 """Kern-Datentypen der Backtest-Engine: keine Abhängigkeit auf config.py/
-cliques.py/strategy.py, um Import-Zyklen zu vermeiden (siehe Modul-Layout im
+clusters.py/strategy.py, um Import-Zyklen zu vermeiden (siehe Modul-Layout im
 Plan: backtest -> signals -> clustering -> config, einbahnig).
 
 `from __future__ import annotations` macht alle Typannotationen zu Strings --
-dadurch dürfen BarContext/BacktestResult auf BasketParams/CliqueSnapshot/
+dadurch dürfen BarContext/BacktestResult auf BasketParams/ClusterSnapshot/
 BacktestConfig aus anderen backtest-Modulen referenzieren, ohne sie zur
 Laufzeit zu importieren (nur unter TYPE_CHECKING, siehe unten).
 """
@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from src.backtest.cliques import CliqueSnapshot
+    from src.backtest.clusters import ClusterSnapshot
     from src.backtest.config import BacktestConfig, BasketParams
 
 
@@ -25,7 +25,7 @@ EXIT_REASONS = (
     "target",
     "stop",
     "timeout",
-    "clique_break",
+    "cluster_break",
     "topological_break",
     "data_gap",
     "delisted",
@@ -130,8 +130,8 @@ class Position:
     params: "BasketParams"  # eingefroren bei Entry -- Kosten/Limits am Exit bleiben konsistent
     membership_key: str
     discovery_timestamp: pd.Timestamp
-    entry_death: float  # = epsilon* der Clique bei Entry, eingefroren (siehe CliqueSnapshot.death)
-    entry_lookback_days: int  # = CliqueSnapshot.lookback_days bei Entry, Default-Fenster für TopologicalBreakRule
+    entry_death: float  # = epsilon* des Clusters bei Entry, eingefroren (siehe ClusterSnapshot.death)
+    entry_lookback_days: int  # = ClusterSnapshot.lookback_days bei Entry, Default-Fenster für TopologicalBreakRule
     direction: int
     legs: list[Leg]
     entry_timestamp: pd.Timestamp
@@ -232,7 +232,7 @@ class BarContext:
     bar_index: int
     basket: str
     params: "BasketParams"
-    snapshot: "CliqueSnapshot | None"
+    snapshot: "ClusterSnapshot | None"
     prices: PriceWindow
     open_positions: tuple[Position, ...]
     equity: float

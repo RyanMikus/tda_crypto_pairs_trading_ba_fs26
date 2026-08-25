@@ -120,7 +120,7 @@ class TestCompareRunsAndDiffConfigs:
 
         diff = bt_runs.diff_configs([a.run_id, b.run_id], backtests_dir=tmp_path)
         assert "default_params.entry_z" in diff.index
-        assert "clique_variant" not in diff.index  # identisch in beiden Configs -> nicht in der Diff
+        assert "cluster_variant" not in diff.index  # identisch in beiden Configs -> nicht in der Diff
 
     def test_compare_equity_curves_normalizes_to_start_at_one(self, tmp_path):
         a = _make_result("curve-a")

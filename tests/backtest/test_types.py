@@ -81,5 +81,5 @@ class TestSpreadDefinition:
         nach der Konstruktion noch ergaenzt werden -- BaseSpreadZScoreStrategy.
         on_snapshot() nutzt genau das, um Snapshot-Diagnostik nachzutragen."""
         definition = self._make()
-        definition.diagnostics["clique_persistence"] = 0.42
-        assert definition.diagnostics["clique_persistence"] == 0.42
+        definition.diagnostics["cluster_persistence"] = 0.42
+        assert definition.diagnostics["cluster_persistence"] == 0.42

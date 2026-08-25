@@ -140,9 +140,9 @@ def plot_basket_metric_comparison(
 
 def plot_pnl_vs_diagnostic(trades: pd.DataFrame, column: str, *, show: bool = True):
     """Streudiagramm net_pnl vs. einer Formations-Diagnostik-Spalte (z.B.
-    half_life_periods, persistence, clique_size) -- der direkte Brückenschlag
+    half_life_periods, persistence, cluster_size) -- der direkte Brückenschlag
     zurück zur TDA-Fragestellung: waren Trades aus persistenteren/schnelleren
-    Cliquen tatsächlich profitabler?"""
+    Clustern tatsächlich profitabler?"""
     if trades.empty or column not in trades.columns:
         print(f"Keine Trades oder Spalte {column!r} nicht vorhanden -- nichts zu plotten.")
         return None, None

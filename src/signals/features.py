@@ -7,30 +7,30 @@ vollen Backtest-Infrastruktur pro Kandidat.
 
 Zwei getrennte Zeitschichten (wichtig für das Verständnis des ganzen Moduls):
 
-    1. Clique-DISCOVERY: einmal pro Kalendertag, mit den in 02_tda_clustering
+    1. Cluster-DISCOVERY: einmal pro Kalendertag, mit den in 02_tda_clustering
        kalibrierten Parametern (BEST_LOOKBACK/THRESHOLD/EPSILON_CAP). Teuer
        (volle Vietoris-Rips/Persistenz-Berechnung), daher NICHT Teil dieses
-       Moduls -- das läuft einmalig in 02_tda_clustering/04_clique_cache.ipynb
-       (HelperFunctions.discover_cliques_over_dates) und wird als Parquet-
+       Moduls -- das läuft einmalig in 02_tda_clustering/04_cluster_cache.ipynb
+       (HelperFunctions.discover_clusters_over_dates) und wird als Parquet-
        Datei gecacht. Das ist auch der Grund, warum der spätere Structural-
        Break-Monitor (Additional-Info-PDF, "Second Phase") existiert: die
-       Clique-MITGLIEDSCHAFT einfrieren statt sie neu zu entdecken.
-    2. Signal-LAYER (dieses Modul): liest den Clique-Cache ein und arbeitet
+       Cluster-MITGLIEDSCHAFT einfrieren statt sie neu zu entdecken.
+    2. Signal-LAYER (dieses Modul): liest den Cluster-Cache ein und arbeitet
        INNERHALB eines Discovery-Tages auf 5-Min-Kerzen-Basis -- sowohl das
        Feature (z.B. Z-Score) als auch die Forward-Returns. Ein Trade darf
        über Mitternacht hinaus laufen (die Forward-Return-Fenster sind nicht
-       an den Kalendertag gebunden), nur die Clique-Mitgliedschaft selbst
+       an den Kalendertag gebunden), nur die Cluster-Mitgliedschaft selbst
        bleibt für den ganzen Discovery-Tag fix.
 
 Kernidee, angepasst an die geclusterte Struktur aus 02_tda_clustering: es gibt
 keine einzelne durchgehende Zeitreihe pro Asset (welche Assets überhaupt
 zusammen betrachtet werden, ändert sich täglich), daher wird ein LANGES
-PANEL über alle (Kerze, Basket, Asset-in-Clique)-Beobachtungen aufgebaut.
+PANEL über alle (Kerze, Basket, Asset-in-Cluster)-Beobachtungen aufgebaut.
 
 Baukasten-Teile:
-    - CliqueContext: alles, was ein Feature über eine konkrete Clique an
+    - ClusterContext: alles, was ein Feature über einen konkreten Cluster an
       einer konkreten Kerze wissen darf.
-    - Feature-Funktionen (Signatur: CliqueContext -> pd.Series) + FEATURE_REGISTRY,
+    - Feature-Funktionen (Signatur: ClusterContext -> pd.Series) + FEATURE_REGISTRY,
       um neue Kandidaten einzuhängen ohne collect_screening_panel anzufassen.
     - collect_screening_panel: baut das lange Panel, vektorisiert über ALLE
       Horizonte auf einmal (keine Python-Schleife pro Horizont) -- damit ist
@@ -53,33 +53,33 @@ import pandas as pd
 # ============================================================================
 
 @dataclass
-class CliqueContext:
-    """Alles, was ein Feature über eine konkrete Clique an einer Kerze braucht.
+class ClusterContext:
+    """Alles, was ein Feature über einen konkreten Cluster an einer Kerze braucht.
 
     Neue Felder bei Bedarf ergänzen (z.B. ein Momentum-Fenster) -- bestehende
     Feature-Funktionen bleiben davon unberührt, sie lesen nur die Felder,
     die sie kennen.
     """
     timestamp: pd.Timestamp    # exakter 5-Min-Kerzen-Zeitstempel dieser Beobachtung
-    discovery_date: pd.Timestamp  # Kalendertag, an dem diese Clique gefunden wurde
+    discovery_date: pd.Timestamp  # Kalendertag, an dem dieser Cluster gefunden wurde
     basket: str
     asset_ids: list
     asset_syms: list
     candle_return: pd.Series   # index=asset_syms, Return DIESER Kerze (roh oder residualisiert)
     trailing_vol: pd.Series    # index=asset_syms, rollierende Kerzen-Vola VOR "jetzt" (kausal)
-    persistence: float         # Persistenz der Clique (death - birth, gedeckelt bei epsilon_cap)
-    lookback_days: int         # topologischer Lookback, mit dem diese Clique gefunden wurde
+    persistence: float         # Persistenz des Clusters (death - birth, gedeckelt bei epsilon_cap)
+    lookback_days: int         # topologischer Lookback, mit dem dieser Cluster gefunden wurde
 
 
 # ============================================================================
-# Feature-Funktionen: Signatur CliqueContext -> pd.Series (index=asset_syms)
+# Feature-Funktionen: Signatur ClusterContext -> pd.Series (index=asset_syms)
 # ============================================================================
 
-def feature_zscore(ctx: CliqueContext) -> pd.Series:
-    """Cross-sektionaler Z-Score des Kerzen-Returns innerhalb der Clique.
+def feature_zscore(ctx: ClusterContext) -> pd.Series:
+    """Cross-sektionaler Z-Score des Kerzen-Returns innerhalb der Cluster.
 
     Entspricht der PDF-Referenzlogik (Haupt-PDF Abschnitt 4.2/5): mu/sigma aus
-    den Returns ALLER Clique-Mitglieder an dieser einen Kerze, nicht aus der
+    den Returns ALLER Cluster-Mitglieder an dieser einen Kerze, nicht aus der
     Historie eines einzelnen Assets.
     """
     r = ctx.candle_return
@@ -93,12 +93,12 @@ FEATURE_REGISTRY: dict = {
     "zscore": feature_zscore,
 }
 # Weitere Kandidaten hier eintragen, siehe Docstring von feature_zscore für
-# die erwartete Signatur (CliqueContext -> pd.Series, index=asset_syms).
+# die erwartete Signatur (ClusterContext -> pd.Series, index=asset_syms).
 # ctx.persistence und ctx.trailing_vol stehen bereits zur Verfügung, falls
-# ein Feature die Clique-Persistenz oder die eigene Asset-Vola einbeziehen
+# ein Feature die Cluster-Persistenz oder die eigene Asset-Vola einbeziehen
 # will (z.B. Z-Score * Persistenz als Konfidenz-Gewicht, oder Abweichung
 # geteilt durch die eigene rollierende Vola statt der Cross-Sektions-Std der
-# Clique -- näher am Lin-et-al.-Prinzip aus der Additional-Info-PDF).
+# Cluster -- näher am Lin-et-al.-Prinzip aus der Additional-Info-PDF).
 
 
 # ============================================================================
@@ -214,7 +214,7 @@ def _forward_returns_dense(
 
     Returns:
         np.ndarray (n_entries, n_horizons, n_assets) -- Forward-Return relativ
-        zur Clique (Cross-Sektions-Mittelwert je (Entry, Horizont) bereits
+        zur Cluster (Cross-Sektions-Mittelwert je (Entry, Horizont) bereits
         abgezogen).
     """
     values = sub_matrix.to_numpy()
@@ -235,7 +235,7 @@ def _forward_returns_dense(
 
 def collect_screening_panel(
     *,
-    cliques_df: pd.DataFrame,
+    clusters_df: pd.DataFrame,
     id_to_symbol: dict,
     returns_df: pd.DataFrame,
     trailing_vol_df: pd.DataFrame,
@@ -246,10 +246,10 @@ def collect_screening_panel(
     factor_asset_ids: list | None = None,
     regression_lookback_candles: int | None = None,
 ) -> pd.DataFrame:
-    """Baut das lange Screening-Panel: eine Zeile pro (Entry-Kerze, Basket, Asset-in-Clique).
+    """Baut das lange Screening-Panel: eine Zeile pro (Entry-Kerze, Basket, Asset-in-Cluster).
 
-    Nutzt eine BEREITS BERECHNETE Clique-Discovery (siehe
-    02_tda_clustering/04_clique_cache.ipynb + HelperFunctions.discover_cliques_over_dates)
+    Nutzt eine BEREITS BERECHNETE Cluster-Discovery (siehe
+    02_tda_clustering/04_cluster_cache.ipynb + HelperFunctions.discover_clusters_over_dates)
     statt sie selbst zu wiederholen -- die teure Persistenzberechnung passiert
     dort einmalig, hier nur noch die vergleichsweise billige, vektorisierte
     Kerzen-/Feature-/Forward-Return-Berechnung (siehe _forward_returns_dense),
@@ -258,7 +258,7 @@ def collect_screening_panel(
     bei jeder neuen Feature-Idee neu zu laufen, ohne auf die Discovery zu warten.
 
     Args:
-        cliques_df: DataFrame wie von HelperFunctions.discover_cliques_over_dates
+        clusters_df: DataFrame wie von HelperFunctions.discover_clusters_over_dates
             zurückgegeben (discovery_date, basket, asset_ids, persistence,
             lookback_days) -- z.B. per pd.read_parquet aus dem Cache geladen
             und ggf. schon auf den gewünschten Zeitraum gefiltert.
@@ -283,13 +283,13 @@ def collect_screening_panel(
     ts_index = returns_df.index
     rows = []
 
-    for clique_row in cliques_df.itertuples():
-        label = clique_row.basket
-        lb = clique_row.lookback_days
-        clique_ids = list(clique_row.asset_ids)
-        clique_syms = [id_to_symbol.get(a, f"ID:{a}") for a in clique_ids]
+    for cluster_row in clusters_df.itertuples():
+        label = cluster_row.basket
+        lb = cluster_row.lookback_days
+        cluster_ids = list(cluster_row.asset_ids)
+        cluster_syms = [id_to_symbol.get(a, f"ID:{a}") for a in cluster_ids]
 
-        day_start = pd.Timestamp(clique_row.discovery_date).normalize()
+        day_start = pd.Timestamp(cluster_row.discovery_date).normalize()
         day_end = day_start + pd.Timedelta(days=1)
         entry_ts = ts_index[(ts_index >= day_start) & (ts_index < day_end)][::entry_stride_candles]
         if len(entry_ts) == 0:
@@ -307,19 +307,19 @@ def collect_screening_panel(
         betas = None
         if residualize:
             betas = compute_frozen_betas(
-                returns_df, factor_asset_ids=factor_asset_ids, target_cols=clique_ids,
+                returns_df, factor_asset_ids=factor_asset_ids, target_cols=cluster_ids,
                 at_timestamp=day_start, regression_lookback_candles=regression_lookback_candles,
             )
             if betas is None:
                 continue
             sub_processed = _apply_frozen_betas_matrix(
-                returns_df.loc[span_index, list(set(clique_ids) | set(factor_asset_ids))],
+                returns_df.loc[span_index, list(set(cluster_ids) | set(factor_asset_ids))],
                 factor_asset_ids=factor_asset_ids, betas=betas,
-            )[clique_ids]
+            )[cluster_ids]
             if sub_processed.isna().any().any():
                 continue
         else:
-            sub_processed = returns_df.loc[span_index, clique_ids]
+            sub_processed = returns_df.loc[span_index, cluster_ids]
             if sub_processed.isna().any().any():
                 continue
 
@@ -327,29 +327,29 @@ def collect_screening_panel(
             sub_processed, entry_positions_in_span, horizons, additive=residualize,
         )  # (n_entries, n_horizons, n_assets)
 
-        trailing_vol_at_entries = trailing_vol_df.loc[entry_ts, clique_ids]
+        trailing_vol_at_entries = trailing_vol_df.loc[entry_ts, cluster_ids]
 
         for i, ts in enumerate(entry_ts):
             candle_ret = sub_processed.iloc[entry_positions_in_span[i]]
-            candle_ret = pd.Series(candle_ret.to_numpy(), index=clique_syms)
+            candle_ret = pd.Series(candle_ret.to_numpy(), index=cluster_syms)
             if candle_ret.isna().any():
                 continue
 
-            tv = pd.Series(trailing_vol_at_entries.iloc[i].to_numpy(), index=clique_syms)
+            tv = pd.Series(trailing_vol_at_entries.iloc[i].to_numpy(), index=cluster_syms)
 
-            ctx = CliqueContext(
+            ctx = ClusterContext(
                 timestamp=ts, discovery_date=day_start, basket=label,
-                asset_ids=clique_ids, asset_syms=clique_syms,
+                asset_ids=cluster_ids, asset_syms=cluster_syms,
                 candle_return=candle_ret, trailing_vol=tv,
-                persistence=clique_row.persistence, lookback_days=lb,
+                persistence=cluster_row.persistence, lookback_days=lb,
             )
             feature_values = {name: fn(ctx) for name, fn in feature_fns.items()}
 
-            for j, sym in enumerate(clique_syms):
+            for j, sym in enumerate(cluster_syms):
                 row = {
                     "timestamp": ts, "discovery_date": day_start, "basket": label,
-                    "asset_id": clique_ids[j], "asset_sym": sym,
-                    "persistence": clique_row.persistence, "clique_size": len(clique_ids),
+                    "asset_id": cluster_ids[j], "asset_sym": sym,
+                    "persistence": cluster_row.persistence, "cluster_size": len(cluster_ids),
                 }
                 for name in feature_fns:
                     row[name] = feature_values[name].get(sym, np.nan)

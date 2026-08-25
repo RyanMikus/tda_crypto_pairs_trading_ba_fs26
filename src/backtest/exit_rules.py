@@ -91,15 +91,15 @@ class MaxHoldingDaysRule:
 
 
 @dataclass
-class CliqueBreakRule:
-    """Exit, sobald die beim Entry gehandelte Clique beim aktuellen Snapshot
-    nicht mehr die aktive Clique dieses Baskets ist (Mitgliedschaftswechsel
-    oder Basket komplett ohne Clique)."""
+class ClusterBreakRule:
+    """Exit, sobald die beim Entry gehandelte Cluster beim aktuellen Snapshot
+    nicht mehr die aktive Cluster dieses Baskets ist (Mitgliedschaftswechsel
+    oder Basket komplett ohne Cluster)."""
 
-    reason: str = "clique_break"
+    reason: str = "cluster_break"
 
     def check(self, position: Position, ctx: BarContext) -> ExitDecision:
-        if not ctx.params.exit_on_clique_break:
+        if not ctx.params.exit_on_cluster_break:
             return NO_EXIT
         if ctx.snapshot is None or ctx.snapshot.membership_key != position.membership_key:
             return ExitDecision(True, self.reason)
@@ -110,18 +110,18 @@ class CliqueBreakRule:
 class TopologicalBreakRule:
     """Topologischer Struktur-Break-Detektor (docs/project/woo_2026a_additional-information.pdf,
     Abschnitt 2): Single-Linkage + fcluster bei epsilon* - delta, NUR auf den
-    Assets der offenen Clique (kein Basket-weiter Re-Discovery-Schritt --
+    Assets des offenen Clusters (kein Basket-weiter Re-Discovery-Schritt --
     genau das macht das Verfahren günstig, siehe PDF und Prototyp in
     notebooks/02_tda_clustering/05_topological_break.ipynb).
 
-    epsilon* = position.entry_death (bei Entry aus CliqueSnapshot.death
-    eingefroren -- NICHT persistence, siehe cliques.CliqueSnapshot.persistence-
+    epsilon* = position.entry_death (bei Entry aus ClusterSnapshot.death
+    eingefroren -- NICHT persistence, siehe clusters.ClusterSnapshot.persistence-
     Kommentar). Rolling-Window per Default = position.entry_lookback_days in
     Kerzen (überschreibbar via topo_break_window_candles).
 
     Zensierter Fall (entry_death == epsilon_cap der Discovery, siehe
     05_topological_break.ipynb Abschnitt 4/7): bewusst KEINE Sonderbehandlung
-    -- eine Clique, die bei der Discovery nie extern verschmolzen ist, hat
+    -- ein Cluster, der bei der Discovery nie extern verschmolzen ist, hat
     schlicht keine beobachtete Aussengrenze; die Regel greift dort seltener,
     das ist die korrekte Konsequenz, keine Notlösung. Für die Auswertung
     trägt jede ausgelöste ExitDecision `signal_value=tau`, damit sich
@@ -152,7 +152,7 @@ class TopologicalBreakRule:
 
         tau = position.entry_death - ctx.params.topo_break_delta
         if tau <= 0:
-            # entry_death lag bereits bei/unter delta (degenerierte Clique,
+            # entry_death lag bereits bei/unter delta (degenerierte Cluster,
             # in der Praxis nicht beobachtet -- death-Werte liegen deutlich
             # darueber). Kein sinnvoller Schnitt moeglich: fcluster mit
             # t<=0 wuerde JEDEN Punkt zum Singleton machen (alle Merge-Hoehen
@@ -173,7 +173,7 @@ DEFAULT_EXIT_CHAIN: list[ExitRule] = [
     StopLossRule(),
     TopologicalBreakRule(),
     MaxHoldingDaysRule(),
-    CliqueBreakRule(),
+    ClusterBreakRule(),
 ]
 """Reihenfolge ist bewusst: Risiko-/Datenqualitäts-Regeln zuerst, dann die
 strukturelle Integritätsprüfung (topologisch, dann Mitgliedschaft), dann

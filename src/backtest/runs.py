@@ -1,11 +1,11 @@
 """Run-Speicherung: legt einen Backtest-Run als Ordner unter
-data/processed/backtests/ ab (analog zum etablierten data/processed/cliques/-
+data/processed/backtests/ ab (analog zum etablierten data/processed/clusters/-
 Präzedenzfall: teuer zu berechnen, deshalb versioniert statt gitignored) und
 stellt Vergleichs-Helper über mehrere Runs bereit.
 
 Bewusst NICHT "persistence.py" genannt: "Persistenz" ist im Rest des Projekts
 bereits ein fest belegter TDA-Begriff (epsilon_death - epsilon_birth einer
-Clique, siehe src/backtest/cliques.py::CliqueSnapshot.persistence) -- ein
+Cluster, siehe src/backtest/clusters.py::ClusterSnapshot.persistence) -- ein
 gleichnamiges Modul für "Backtest-Runs auf Platte speichern" wäre verwirrend.
 """
 
@@ -25,7 +25,7 @@ from src.backtest.types import BacktestResult
 from src.config import BACKTESTS_DIR
 
 _INDEX_COLUMNS = [
-    "run_id", "created_at", "label", "description", "strategy_name", "clique_variant",
+    "run_id", "created_at", "label", "description", "strategy_name", "cluster_variant",
     "baskets", "backtest_start", "backtest_end", "fingerprint",
     "n_trades", "sharpe_daily", "cagr_daily", "max_drawdown_pct", "runtime_seconds",
 ]
@@ -156,7 +156,7 @@ def _rebuild_index(backtests_dir: Path) -> pd.DataFrame:
             "label": cfg.get("label"),
             "description": cfg.get("description"),
             "strategy_name": cfg.get("strategy_name"),
-            "clique_variant": cfg.get("clique_variant"),
+            "cluster_variant": cfg.get("cluster_variant"),
             "baskets": cfg.get("baskets"),
             "backtest_start": backtest_range.get("start"),
             "backtest_end": backtest_range.get("end"),

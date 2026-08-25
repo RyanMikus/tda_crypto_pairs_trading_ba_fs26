@@ -3,7 +3,7 @@ import pytest
 
 from src.backtest.config import BasketParams
 from src.backtest.exit_rules import (
-    CliqueBreakRule,
+    ClusterBreakRule,
     DataGapRule,
     DEFAULT_EXIT_CHAIN,
     MaxHoldingDaysRule,
@@ -120,38 +120,38 @@ class TestMaxHoldingDaysRule:
         assert not MaxHoldingDaysRule().check(position, ctx).should_exit
 
 
-class TestCliqueBreakRule:
+class TestClusterBreakRule:
     def test_triggers_when_snapshot_membership_differs(self, make_position, make_bar_context):
-        params = BasketParams(exit_on_clique_break=True)
+        params = BasketParams(exit_on_cluster_break=True)
         position = make_position(params=params, membership_key="old-key")
 
         class FakeSnapshot:
             membership_key = "new-key"
 
         ctx = make_bar_context(params=params, snapshot=FakeSnapshot())
-        assert CliqueBreakRule().check(position, ctx).reason == "clique_break"
+        assert ClusterBreakRule().check(position, ctx).reason == "cluster_break"
 
     def test_triggers_when_no_snapshot_active(self, make_position, make_bar_context):
-        params = BasketParams(exit_on_clique_break=True)
+        params = BasketParams(exit_on_cluster_break=True)
         position = make_position(params=params, membership_key="old-key")
         ctx = make_bar_context(params=params, snapshot=None)
-        assert CliqueBreakRule().check(position, ctx).should_exit
+        assert ClusterBreakRule().check(position, ctx).should_exit
 
     def test_does_not_trigger_when_membership_matches(self, make_position, make_bar_context):
-        params = BasketParams(exit_on_clique_break=True)
+        params = BasketParams(exit_on_cluster_break=True)
         position = make_position(params=params, membership_key="same-key")
 
         class FakeSnapshot:
             membership_key = "same-key"
 
         ctx = make_bar_context(params=params, snapshot=FakeSnapshot())
-        assert not CliqueBreakRule().check(position, ctx).should_exit
+        assert not ClusterBreakRule().check(position, ctx).should_exit
 
     def test_disabled_by_param(self, make_position, make_bar_context):
-        params = BasketParams(exit_on_clique_break=False)
+        params = BasketParams(exit_on_cluster_break=False)
         position = make_position(params=params, membership_key="old-key")
         ctx = make_bar_context(params=params, snapshot=None)
-        assert not CliqueBreakRule().check(position, ctx).should_exit
+        assert not ClusterBreakRule().check(position, ctx).should_exit
 
 
 class TestTopologicalBreakRule:
@@ -210,7 +210,7 @@ class TestEvaluateExitChain:
         assert decision.reason == "data_gap"
 
     def test_no_exit_when_nothing_matches(self, make_position, make_bar_context, make_multi_bar_price_window):
-        params = BasketParams(max_data_gap_candles=99, stop_z=4.0, exit_on_clique_break=False, bollinger_window_candles=2, max_holding_days=None)
+        params = BasketParams(max_data_gap_candles=99, stop_z=4.0, exit_on_cluster_break=False, bollinger_window_candles=2, max_holding_days=None)
         position = make_position(params=params, bars_held=0, missing_price_bars=0)
         prices = _zeros_and_spike_window(make_multi_bar_price_window, n=2)  # z=1.0 < stop_z
         ctx = make_bar_context(params=params, prices=prices)

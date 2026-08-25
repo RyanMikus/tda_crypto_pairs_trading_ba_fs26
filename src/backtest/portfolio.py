@@ -22,7 +22,7 @@ import pandas as pd
 from src.backtest.types import EntrySignal, Leg, Position
 
 if TYPE_CHECKING:
-    from src.backtest.cliques import CliqueSnapshot
+    from src.backtest.clusters import ClusterSnapshot
     from src.backtest.config import BasketParams
 
 FORCED_EXIT_REASONS = {"data_gap", "end_of_backtest"}
@@ -166,7 +166,7 @@ class Portfolio:
     # ------------------------------------------------------------------
 
     def queue_open(
-        self, *, signal: EntrySignal, basket: str, snapshot: "CliqueSnapshot", params: "BasketParams",
+        self, *, signal: EntrySignal, basket: str, snapshot: "ClusterSnapshot", params: "BasketParams",
         strategy_name: str, fill_at_bar_index: int,
     ) -> None:
         self._pending_opens.append({
@@ -199,7 +199,7 @@ class Portfolio:
             )
 
     def _execute_open(
-        self, signal: EntrySignal, basket: str, snapshot: "CliqueSnapshot", params: "BasketParams",
+        self, signal: EntrySignal, basket: str, snapshot: "ClusterSnapshot", params: "BasketParams",
         strategy_name: str, bar_index: int, ts: pd.Timestamp,
     ) -> None:
         definition = signal.spread
@@ -256,7 +256,7 @@ class Portfolio:
         """Wie types.PriceWindow.history(), aber auf Portfolio-Ebene -- nur
         fürs Trade-Log bei Exit gebraucht (siehe _execute_close), wenn die
         auslösende ExitRule keinen signal_value mitliefert (z.B. timeout/
-        data_gap/clique_break) und exit_z stattdessen frisch nachberechnet
+        data_gap/cluster_break) und exit_z stattdessen frisch nachberechnet
         werden muss. Kausal (nur Kerzen bis einschliesslich bar_index)."""
         cols = [self._symbol_to_col[s] for s in symbols]
         start = max(bar_index - n_candles + 1, 0)
@@ -297,7 +297,7 @@ class Portfolio:
             # Z-Score hat den Exit ausgeloest".
             exit_z = signal_value
         else:
-            # Ausloeser ohne eigenen Z-Score (timeout/data_gap/clique_break) --
+            # Ausloeser ohne eigenen Z-Score (timeout/data_gap/cluster_break) --
             # informativer Nachtrag frisch aus dem rollierenden Band, NaN falls
             # nicht berechenbar (z.B. Datenluecke im Fenster).
             exit_price_window = self._price_window(position.spread.symbols, position.params.bollinger_window_candles, bar_index)
@@ -356,8 +356,8 @@ class Portfolio:
             "hurst": diag.get("hurst", np.nan),
             "half_life_periods": diag.get("half_life_periods", np.nan),
             "n_coint_relations": diag.get("n_coint_relations", np.nan),
-            "persistence": diag.get("clique_persistence", np.nan),
-            "clique_size": diag.get("clique_size", np.nan),
+            "persistence": diag.get("cluster_persistence", np.nan),
+            "cluster_size": diag.get("cluster_size", np.nan),
             "entry_death": position.entry_death,
             "entry_lookback_days": position.entry_lookback_days,
         })

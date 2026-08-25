@@ -3,10 +3,10 @@ import json
 import pandas as pd
 import pytest
 
-from src.backtest.cliques import CliqueTimeline, TimelineCursor
+from src.backtest.clusters import ClusterTimeline, TimelineCursor
 
 
-class TestCliqueTimelineFromCache:
+class TestClusterTimelineFromCache:
     def test_infer_interval_is_one_day(self, timeline):
         assert timeline.infer_interval() == pd.Timedelta(days=1)
         assert timeline.infer_interval("Basket 1") == pd.Timedelta(days=1)
@@ -24,11 +24,11 @@ class TestCliqueTimelineFromCache:
         assert len(snap.asset_ids) == len(snap.symbols) == len(symbols)
         assert not snap.dropped_asset_ids
 
-    def test_unresolvable_asset_is_dropped_not_crashed(self, cliques_cache_dir, id_to_symbol):
+    def test_unresolvable_asset_is_dropped_not_crashed(self, clusters_cache_dir, id_to_symbol):
         # id_to_symbol ohne das letzte Asset -> muss als dropped auftauchen, nicht crashen
         partial_map = dict(list(id_to_symbol.items())[:-1])
-        timeline = CliqueTimeline.from_cache(
-            variant="raw", id_to_symbol=partial_map, cliques_dir=cliques_cache_dir, baskets=["Basket 1"],
+        timeline = ClusterTimeline.from_cache(
+            variant="raw", id_to_symbol=partial_map, clusters_dir=clusters_cache_dir, baskets=["Basket 1"],
         )
         snap = timeline.snapshots("Basket 1")[0]
         assert len(snap.dropped_asset_ids) == 1
@@ -36,11 +36,11 @@ class TestCliqueTimelineFromCache:
 
     def test_missing_cache_file_raises_filenotfound(self, tmp_path, id_to_symbol):
         with pytest.raises(FileNotFoundError):
-            CliqueTimeline.from_cache(variant="raw", id_to_symbol=id_to_symbol, cliques_dir=tmp_path)
+            ClusterTimeline.from_cache(variant="raw", id_to_symbol=id_to_symbol, clusters_dir=tmp_path)
 
-    def test_requested_basket_with_no_rows_still_present_but_empty(self, cliques_cache_dir, id_to_symbol):
-        timeline = CliqueTimeline.from_cache(
-            variant="raw", id_to_symbol=id_to_symbol, cliques_dir=cliques_cache_dir,
+    def test_requested_basket_with_no_rows_still_present_but_empty(self, clusters_cache_dir, id_to_symbol):
+        timeline = ClusterTimeline.from_cache(
+            variant="raw", id_to_symbol=id_to_symbol, clusters_dir=clusters_cache_dir,
             baskets=["Basket 1", "Basket 2"],
         )
         assert timeline.snapshots("Basket 2") == []
@@ -59,13 +59,13 @@ class TestTimelineCursor:
                 "persistence": 0.5, "death": 1.0, "size": len(members), "lookback_days": 1,
             })
         df = pd.DataFrame(rows)
-        cliques_dir = tmp_path / "cliques"
-        cliques_dir.mkdir()
-        df.to_parquet(cliques_dir / "cliques_raw.parquet", index=False)
-        (cliques_dir / "cliques_raw.meta.json").write_text(json.dumps({"variant": "raw"}))
+        clusters_dir = tmp_path / "clusters"
+        clusters_dir.mkdir()
+        df.to_parquet(clusters_dir / "clusters_raw.parquet", index=False)
+        (clusters_dir / "clusters_raw.meta.json").write_text(json.dumps({"variant": "raw"}))
 
         id_to_symbol = {v: k for k, v in symbol_to_id.items()}
-        timeline = CliqueTimeline.from_cache(variant="raw", id_to_symbol=id_to_symbol, cliques_dir=cliques_dir, baskets=["Basket 1"])
+        timeline = ClusterTimeline.from_cache(variant="raw", id_to_symbol=id_to_symbol, clusters_dir=clusters_dir, baskets=["Basket 1"])
         cursor = TimelineCursor(timeline, "Basket 1")
 
         changes = []

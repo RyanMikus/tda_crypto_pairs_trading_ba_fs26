@@ -3,7 +3,7 @@
 Reihenfolge innerhalb einer Bar (siehe Plan, Abschnitt "Engine-Loop"):
   1. Fills aus vorherigen Bars ausführen (Look-Ahead-Guard G3)
   2. Mark-to-Market
-  3. Clique-Snapshots pro Basket vorrücken
+  3. Cluster-Snapshots pro Basket vorrücken
   4. Exits prüfen (Engine-weite Regeln zuerst, dann strategiespezifisch)
   5. Entries generieren (nur bei freier Kapazität)
   6. Equity-Zeile schreiben
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.backtest.cliques import CliqueTimeline, TimelineCursor
+from src.backtest.clusters import ClusterTimeline, TimelineCursor
 from src.backtest.config import BacktestConfig
 from src.backtest.exit_rules import DEFAULT_EXIT_CHAIN, ExitRule, evaluate_exit_chain
 from src.backtest.portfolio import Portfolio
@@ -29,7 +29,7 @@ class BacktestEngine:
         *,
         config: BacktestConfig,
         panel: dict[str, pd.DataFrame],
-        timeline: CliqueTimeline,
+        timeline: ClusterTimeline,
         exit_chain: list[ExitRule] | None = None,
     ) -> None:
         self.config = config
@@ -72,10 +72,10 @@ class BacktestEngine:
         return int(pos)
 
     def _resolved_availability_lag(self) -> pd.Timedelta:
-        """Liefert den Clique-Availability-Lag, der für die Backtest-Engine gilt.
-        bedeutet: wie weit die Clique-Definitionen hinter dem aktuellen Timestamp liegen (z.B. 1 Tag).
-        Wenn config.clique_availability_lag auf "auto" steht, wird der Lag automatisch auf das Discovery-Intervall gesetzt, aber maximal 1 Tag."""
-        lag = self.config.clique_availability_lag
+        """Liefert den Cluster-Availability-Lag, der für die Backtest-Engine gilt.
+        bedeutet: wie weit die Cluster-Definitionen hinter dem aktuellen Timestamp liegen (z.B. 1 Tag).
+        Wenn config.cluster_availability_lag auf "auto" steht, wird der Lag automatisch auf das Discovery-Intervall gesetzt, aber maximal 1 Tag."""
+        lag = self.config.cluster_availability_lag
         if lag != "auto":
             return lag
         interval = self.timeline.infer_interval()
@@ -96,11 +96,11 @@ class BacktestEngine:
 
     def describe_guards(self) -> str:
         """G1-G8 Guards, die für die Backtest-Engine gelten.
-        G1: Clique-Verfügbarkeitslag (Discovery-Intervall)
+        G1: Cluster-Verfügbarkeitslag (Discovery-Intervall)
         G2: PriceWindow-Cutoff (strategien können nicht über bar_index hinaus lesen)
         G3: Ausführungs-Lag (Fill-Preis-Feld)
         G4: Eingefrorene Schätzer (SpreadDefinition wird bei Formation fixiert, kein Re-Fit während offener Position)
-        G5: Basket-Zuordnung (aus dem Clique-Cache übernommen, nicht zur Bar-Zeit neu abgeleitet)
+        G5: Basket-Zuordnung (aus dem Cluster-Cache übernommen, nicht zur Bar-Zeit neu abgeleitet)
         G6: Calibration-Zeitraum (Formation-Range) und Backtest-Zeitraum
         G7: Warm-up (Kerzen vor config.start, pro Basket)
         G8: Snapshot-Ablauf (max_snapshot_age)
@@ -109,11 +109,11 @@ class BacktestEngine:
         interval = self.timeline.infer_interval()
         required = {b: self.strategy.required_history_candles(self.config.params_for(b)) for b in self.config.baskets}
         lines = [
-            f"G1 Clique-Verfügbarkeitslag: {lag} (Discovery-Intervall: {interval})",
+            f"G1 Cluster-Verfügbarkeitslag: {lag} (Discovery-Intervall: {interval})",
             "G2 PriceWindow-Cutoff: aktiv (Strategien können strukturell nicht über bar_index hinaus lesen)",
             f"G3 Ausführungs-Lag: {self.config.execution_lag_candles} Kerze(n), Fill-Preis-Feld: {self.config.fill_price_field}",
             "G4 Eingefrorene Schätzer: SpreadDefinition wird bei Formation fixiert, kein Re-Fit während offener Position",
-            "G5 Basket-Zuordnung: aus dem Clique-Cache übernommen, nicht zur Bar-Zeit neu abgeleitet",
+            "G5 Basket-Zuordnung: aus dem Cluster-Cache übernommen, nicht zur Bar-Zeit neu abgeleitet",
             f"G6 Calibration-Zeitraum: {self.config.calibration_range}  |  Backtest-Zeitraum: {self.config.backtest_range}",
             f"G7 Warm-up (Kerzen vor config.start, pro Basket): {required}",
             f"G8 Snapshot-Ablauf (max_snapshot_age): {self.config.max_snapshot_age}",
@@ -125,11 +125,11 @@ class BacktestEngine:
     # ------------------------------------------------------------------
 
     def _get_or_fit_state(self, basket, snapshot, ctx, params) -> StrategyState | None:
-        """Liefert den StrategyState für die gegebene Clique-Snapshot-Definition.
+        """Liefert den StrategyState für die gegebene Cluster-Snapshot-Definition.
         Wenn der State bereits im Cache ist und nicht älter als _DEFAULT_MAX_STATE_AGE, wird er zurückgegeben.
         Ansonsten wird self.strategy.on_snapshot() aufgerufen, um den State zu berechnen und im Cache zu speichern.
         Wenn on_snapshot() fehlschlägt, wird None zurückgegeben und eine Warnung in self.warnings geschrieben.
-        State bedeutet: die Schätzer (z.B. OLS/Johansen) für die gegebene Clique-Definition, die für die Entry/Exit-Entscheidungen verwendet werden."""
+        State bedeutet: die Schätzer (z.B. OLS/Johansen) für die gegebene Cluster-Definition, die für die Entry/Exit-Entscheidungen verwendet werden."""
         key = (basket, snapshot.membership_key)
         cached = self._state_cache.get(key)
         if cached is not None and (ctx.timestamp - cached.fitted_at) <= _DEFAULT_MAX_STATE_AGE:

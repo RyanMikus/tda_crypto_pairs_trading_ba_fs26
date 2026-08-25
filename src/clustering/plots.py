@@ -162,7 +162,7 @@ def plot_vietoris_rips_epsilon_slider(
 
     Zeigt direkt das Geburts-/Verschmelzungsverhalten der H0-Features:
     bei epsilon=0 ist jedes Asset isoliert (n Cluster), mit wachsendem epsilon verschmelzen
-    Cliquen, bis am Ende alles ein einziger Cluster ist. Die Knotenposition kommt aus MDS
+    Clustern, bis am Ende alles ein einziger Cluster ist. Die Knotenposition kommt aus MDS
     auf der Korrelationsdistanzmatrix (Assets mit ähnlichem Return-Profil liegen nah beieinander),
     die Kanten sind der eigentliche Vietoris-Rips-1-Skelett bei der gewählten Schwelle.
 
@@ -325,7 +325,7 @@ def plot_dendrogram_with_clusters(
 
     Im Unterschied zu plot_dendrogram (ein einziger globaler Höhen-Schnitt) werden
     hier die von HelperFunctions.get_persistent_clusters gefundenen, jeweils an
-    ihrer eigenen Skala geschnittenen Cliquen eingefärbt: jeder Ast INNERHALB
+    ihrer eigenen Skala geschnittenen Clustern eingefärbt: jeder Ast INNERHALB
     eines gefundenen Clusters (inkl. seiner eigenen Merge-Linie) bekommt dessen
     Farbe, alles ausserhalb (Vorfahren, die selbst nicht mehr persistent genug
     waren, und Äste ohne jeden legitimen Cluster) bleibt grau. Assets, die zu

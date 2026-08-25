@@ -1,7 +1,7 @@
 """Gemeinsame Fixtures für die Backtest-Engine-Tests.
 
 Alles hier ist SYNTHETISCH (kein Zugriff auf data/raw/... oder
-data/processed/cliques/...), damit die Testsuite schnell, deterministisch und
+data/processed/clusters/...), damit die Testsuite schnell, deterministisch und
 unabhängig vom tatsächlichen (grossen) Datenbestand läuft. AAAUSDT/BBBUSDT
 sind absichtlich stark kointegriert gebaut, damit PairwiseZScoreStrategy
 in den End-to-End-Tests zuverlässig Trades erzeugt;
@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.backtest.cliques import CliqueTimeline
+from src.backtest.clusters import ClusterTimeline
 from src.backtest.config import BasketParams
 from src.backtest.types import BarContext, Leg, Position, PriceWindow, SpreadDefinition
 
@@ -68,10 +68,10 @@ def synthetic_panel(price_index):
     }
 
 
-def write_clique_cache(tmp_path, *, price_index, symbol_to_id, symbols, basket="Basket 1", lookback_days=1):
-    """Schreibt einen synthetischen Clique-Cache (ein Snapshot pro Kalendertag,
+def write_cluster_cache(tmp_path, *, price_index, symbol_to_id, symbols, basket="Basket 1", lookback_days=1):
+    """Schreibt einen synthetischen Cluster-Cache (ein Snapshot pro Kalendertag,
     immer dieselben Assets) im selben Format wie
-    HelperFunctions.discover_cliques_over_dates."""
+    HelperFunctions.discover_clusters_over_dates."""
     rows = []
     for d in pd.date_range(price_index[0].normalize(), price_index[-1].normalize(), freq="D", tz="UTC"):
         rows.append({
@@ -85,22 +85,22 @@ def write_clique_cache(tmp_path, *, price_index, symbol_to_id, symbols, basket="
         })
     df = pd.DataFrame(rows)
 
-    cliques_dir = tmp_path / "cliques"
-    cliques_dir.mkdir(exist_ok=True)
-    df.to_parquet(cliques_dir / "cliques_raw.parquet", index=False)
-    (cliques_dir / "cliques_raw.meta.json").write_text(json.dumps({"variant": "raw"}))
-    return cliques_dir
+    clusters_dir = tmp_path / "clusters"
+    clusters_dir.mkdir(exist_ok=True)
+    df.to_parquet(clusters_dir / "clusters_raw.parquet", index=False)
+    (clusters_dir / "clusters_raw.meta.json").write_text(json.dumps({"variant": "raw"}))
+    return clusters_dir
 
 
 @pytest.fixture
-def cliques_cache_dir(tmp_path, price_index, symbol_to_id, symbols):
-    return write_clique_cache(tmp_path, price_index=price_index, symbol_to_id=symbol_to_id, symbols=symbols)
+def clusters_cache_dir(tmp_path, price_index, symbol_to_id, symbols):
+    return write_cluster_cache(tmp_path, price_index=price_index, symbol_to_id=symbol_to_id, symbols=symbols)
 
 
 @pytest.fixture
-def timeline(cliques_cache_dir, id_to_symbol):
-    return CliqueTimeline.from_cache(
-        variant="raw", id_to_symbol=id_to_symbol, cliques_dir=cliques_cache_dir, baskets=["Basket 1"],
+def timeline(clusters_cache_dir, id_to_symbol):
+    return ClusterTimeline.from_cache(
+        variant="raw", id_to_symbol=id_to_symbol, clusters_dir=clusters_cache_dir, baskets=["Basket 1"],
     )
 
 

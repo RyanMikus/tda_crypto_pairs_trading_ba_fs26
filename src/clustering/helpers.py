@@ -145,7 +145,7 @@ class HelperFunctions:
                 - end_date (Timestamp): Cutoff-Zeitpunkt des Fensters (inklusiv,
                     wie übergeben, ohne Normierung).
 
-        Look-Ahead-Hinweis (ehemals "Guard G1", siehe src/backtest/cliques.py):
+        Look-Ahead-Hinweis (ehemals "Guard G1", siehe src/backtest/clusters.py):
             Vorher wurde end_date auf Mitternacht normiert und auf DATE_COL
             gefiltert -- eine für Tag D "gebaute" Punktwolke enthielt damit
             ALLE 288 Kerzen von Tag D, auch die nach Mitternacht noch gar
@@ -867,7 +867,7 @@ class HelperFunctions:
         return lines
 
     @staticmethod
-    def discover_cliques_over_dates(
+    def discover_clusters_over_dates(
         *,
         ohlcv_df: pd.DataFrame,
         universe_df: pd.DataFrame,
@@ -884,10 +884,10 @@ class HelperFunctions:
         point_cloud_fn,
         dates: list,
     ) -> pd.DataFrame:
-        """Führt die (teure) Clique-Discovery über viele Tage x Baskets aus.
+        """Führt die (teure) Cluster-Discovery über viele Tage x Baskets aus.
 
         Gedacht zum EINMALIGEN Berechnen und Cachen (siehe
-        04_clique_cache.ipynb) statt bei jedem nachgelagerten Notebook
+        04_cluster_cache.ipynb) statt bei jedem nachgelagerten Notebook
         (Signal-Screening, später Backtest) neu zu rechnen -- die eigentlich
         teure Arbeit ist hier drin (volle Vietoris-Rips/Persistenz-Berechnung
         pro Tag und Basket), alles danach (Feature-Berechnung, Forward-
@@ -904,24 +904,24 @@ class HelperFunctions:
 
         Returns:
             DataFrame mit einer Zeile pro (Zeitpunkt, Basket), an dem tatsächlich
-            eine Clique gefunden wurde (kein Eintrag für Zeitpunkte ohne Cluster --
+            ein Cluster gefunden wurde (kein Eintrag für Zeitpunkte ohne Cluster --
             Abwesenheit in dieser Tabelle IST die Information). Spalten:
             discovery_date, basket, asset_ids (list[int]), persistence, death,
-            size, lookback_days. death = epsilon*, die Distanz, bei der die
-            Clique als Gruppe zum ersten Mal mit einem Nicht-Mitglied
+            size, lookback_days. death = epsilon*, die Distanz, bei der der
+            Cluster als Gruppe zum ersten Mal mit einem Nicht-Mitglied
             verschmelzen würde (gedeckelt bei epsilon_cap) -- das ist der
             fürs Struktur-Break-Monitoring relevante Wert (siehe
             src/backtest/exit_rules.TopologicalBreakRule), NICHT persistence
-            (= death - birth, birth ist bei den hier gefundenen Cliquen wegen
+            (= death - birth, birth ist bei den hier gefundenen Clustern wegen
             min_cluster_size>=2 fast nie 0).
 
         Sub-tägige Discovery-Intervalle (dates mit z.B. freq="2h"/"4h"): die
         Basket-/Volumen-Zugehörigkeit bleibt pro Kalendertag fix (rolling_volume_df
         hat ohnehin nur Tagesgranularität -- jeder Aufruf innerhalb desselben
-        Tages nutzt also dieselbe Mitgliederliste), NUR das Clique-Fenster
+        Tages nutzt also dieselbe Mitgliederliste), NUR das Cluster-Fenster
         (point_cloud_fn) läuft bis zum vollen Zeitstempel von t, nicht bis
         Tagesende. discovery_date bleibt entsprechend ein voller Timestamp
-        (KEIN .normalize() -- siehe src/backtest/cliques.py, das genau diese
+        (KEIN .normalize() -- siehe src/backtest/clusters.py, das genau diese
         Zusicherung voraussetzt, um das Discovery-Intervall aus den Daten zu
         inferieren statt es fest anzunehmen).
         """
@@ -954,14 +954,14 @@ class HelperFunctions:
                 )
                 if not clusters:
                     continue
-                clique = clusters[0]
+                cluster = clusters[0]
                 rows.append({
                     "discovery_date": t,
                     "basket": label,
-                    "asset_ids": clique["asset_ids"],
-                    "persistence": clique["persistence"],
-                    "death": clique["death"],
-                    "size": clique["size"],
+                    "asset_ids": cluster["asset_ids"],
+                    "persistence": cluster["persistence"],
+                    "death": cluster["death"],
+                    "size": cluster["size"],
                     "lookback_days": lb,
                 })
 
