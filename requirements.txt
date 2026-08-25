@@ -3,17 +3,19 @@
 # ============================================================
 # Diese Datei wird verwendet von:
 #   - environment.yml  (Windows / Conda)
-# 
+#
 #
 # NUR direkte Abhängigkeiten. Transitive Pakete
 # werden automatisch aufgelöst.
 #
-# Python 3.11 erforderlich 
+# Python 3.11 erforderlich
 # ============================================================
 
 # ── TDA (Kern des Projekts) ──
+# giotto-tda wird NICHT (mehr) gebraucht: die Vietoris-Rips-H0-Persistenz wird
+# direkt über scipy.cluster.hierarchy (Single-Linkage + fcluster) berechnet,
+# das ist mathematisch äquivalent (siehe src/clustering/helpers.py).
 #giotto-tda==0.6.2
-pyflagser>=0.4.3
 
 # ── Wissenschaftliche Basis ──
 numpy==1.26.*
@@ -32,12 +34,6 @@ pytest>=8.0
 # ── Visualisierung ──
 plotly>=5.15
 
-# ── Graphen ──
-igraph
-
-# ── Krypto-Signaturen ──
-coincurve
-
 # ── Jupyter ──
 ipykernel
 ipython
@@ -46,10 +42,8 @@ jupyterlab
 
 # ── Netzwerk ──
 requests
-aiohttp
 
 # ── Datenformate ──
-lxml
 pyarrow
 
 # ── Hilfspakete ──
@@ -58,6 +52,3 @@ tqdm
 # ── Hyperparameter-Tuning ──
 optuna
 optuna-dashboard
-
-# ── Dashboard ──
-customtkinter

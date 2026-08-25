@@ -58,7 +58,7 @@ Links im Terminal sollte jetzt `(tda-trading)` stehen.
 ### 5. Testen
 
 ```bash
-python -c "import gtda; import matplotlib; import ccxt; print('Alles OK')"
+python -c "import numpy; import scipy; import matplotlib; import optuna; print('Alles OK')"
 ```
 
 ### Environment aktualisieren / löschen
@@ -128,7 +128,7 @@ Links im Terminal sollte jetzt `(.venv)` stehen.
 ### 5. Testen
 
 ```bash
-python -c "import gtda; import matplotlib; import ccxt; print('Alles OK')"
+python -c "import numpy; import scipy; import matplotlib; import optuna; print('Alles OK')"
 ```
 
 ### Environment aktualisieren / löschen
