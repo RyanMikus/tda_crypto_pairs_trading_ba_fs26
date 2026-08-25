@@ -27,20 +27,20 @@ Konvention, damit Runs untereinander vergleichbar bleiben:
    `NN_sweep_*.ipynb` — aber immer mit `save_run` pro Variante, damit jede
    Konfiguration einzeln im Vergleich auftaucht.
 
-5. `04_run_comparison.ipynb` führt **nie** einen Backtest aus, sondern liest
+5. `02_run_comparison.ipynb` führt **nie** einen Backtest aus, sondern liest
    ausschließlich gespeicherte Runs aus `data/processed/backtests/` — bleibt
    dadurch in Sekunden reproduzierbar.
-6. `08_tune_dynamic_vol.ipynb` bedient `src.backtest.tuning.tune_basket_params`
+6. `03_tune_dynamic_vol.ipynb` bedient `src.backtest.tuning.tune_basket_params`
    für `pairwise_zscore` mit `symmetric_exit`/`dynamic_threshold_enabled`/
-   `dynamic_sizing_enabled` fest an (siehe docs/project/"Suggested methods für
-   improving trading performance.pdf" A.1/A.2/E) sowohl über eine automatische
+   `dynamic_sizing_enabled` fest an (siehe
+   docs/project/"woo_2026b_suggested-trading-methods.pdf" A.1/A.2/E) sowohl über eine automatische
    Alle-Baskets-Suche (Abschnitt 4) als auch über ein zusätzliches
    ipywidgets-Panel für einzelne Baskets (Abschnitt 4b, Checkbox "tunen" +
    Fix-/Bereichsfeld pro Parameter, siehe `src.backtest.tuning.SearchSpec`) --
    inkl. Checkbox, um automatisch alle Kerzenlängen (5/10/15/30/60/240 min)
    nacheinander durchzutunen.
-7. `09_tuning_overview.ipynb` liest **alle** gespeicherten Tuning-Läufe aus
-   `08` (`src.backtest.tuning.load_all_tuning_results`) und führt pro
+7. `04_tuning_overview.ipynb` liest **alle** gespeicherten Tuning-Läufe aus
+   `03_tune_dynamic_vol.ipynb` (`src.backtest.tuning.load_all_tuning_results`) und führt pro
    Basket×Kerzenlänge-Kombination einen vollständigen Backtest über den
    **gesamten** Zeitraum aus, geteilt in Test (`CALIBRATION_RANGE`,
    in-sample bzgl. Parameterwahl) und Validierung (`BACKTEST_RANGE`, echtes
@@ -61,7 +61,7 @@ Jedes Notebook druckt vor dem Lauf `engine.describe_guards()` aus (G1–G8, sieh
 `DEFAULT_EXIT_CHAIN` (`src/backtest/exit_rules.py`) wendet pro Bar mehrere
 Regeln in fester Reihenfolge an: `DataGapRule`, `StopLossRule`,
 `TopologicalBreakRule` (Single-Linkage + `fcluster` bei `ε* − δ`, siehe
-`docs/project/BA_aufgabenstellung_zusatz.pdf`; standardmässig AUS über
+`docs/project/woo_2026a_additional-information.pdf`; standardmässig AUS über
 `BasketParams.topo_break_enabled`), `MaxHoldingDaysRule`, `CliqueBreakRule`.
 Weitere Regeln lassen sich als zusätzliches `ExitRule`-Objekt in die Kette
 einhängen, ohne `engine.py` zu ändern.

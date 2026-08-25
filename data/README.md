@@ -8,4 +8,4 @@ Alle Marktdaten und Pipeline-Ergebnisse dieses Projekts. Zwei Hauptbereiche:
 Jeder Unterordner enthält eine eigene `README.md` mit Details zu Herkunft, Format und
 erzeugendem Notebook/Modul. Rohdaten werden von `notebooks/01_data_aquisition/` erzeugt,
 alles unter `processed/` von den Notebooks in `notebooks/02_tda_clustering/` und
-`notebooks/04_backtest/` sowie den zugehörigen `src/`-Modulen.
+`notebooks/03_backtest/` sowie den zugehörigen `src/`-Modulen.

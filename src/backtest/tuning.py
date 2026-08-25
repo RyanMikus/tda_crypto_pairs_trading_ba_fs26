@@ -203,7 +203,7 @@ def fold_days_for_n_windows(
         fold_days (>= 1), das bei generate_walkforward_folds moeglichst nah
         an n_windows tatsaechliche Fenster ergibt (kann wegen Rundung und
         Restlaenge leicht abweichen -- Ergebnis mit generate_walkforward_folds
-        gegenpruefen, siehe notebooks/04_backtest/08_tune_dynamic_vol.ipynb).
+        gegenpruefen, siehe notebooks/03_backtest/03_tune_dynamic_vol.ipynb).
 
     Raises:
         ValueError: falls n_windows < 1, oder falls selbst n_windows=1 kein
@@ -503,10 +503,10 @@ def save_tuning_results(
 
     fixed_overrides: die BasketParams-Felder, die WAEHREND DIESES LAUFS fix
     waren (also NICHT gesucht wurden -- z.B. "tunen"=AUS im Widget-Panel in
-    08_tune_dynamic_vol.ipynb). result.best_params (aus Optuna study.best_params)
+    03_tune_dynamic_vol.ipynb). result.best_params (aus Optuna study.best_params)
     enthaelt NUR die tatsaechlich gesuchten Felder -- ohne fixed_overrides gehen
     die fixen Werte beim Speichern verloren und ein spaeterer Konsument (z.B.
-    09_tuning_overview.ipynb) muesste eigene, potenziell abweichende Defaults
+    04_tuning_overview.ipynb) muesste eigene, potenziell abweichende Defaults
     fuer diese Felder raten. Entweder EIN dict (gleiche Fix-Werte fuer alle
     Baskets in `results`, z.B. das Widget-Panel-Sequenzmuster) oder ein
     {basket: dict}-Mapping (unterschiedliche Fix-Werte je Basket). None (Default)
@@ -564,7 +564,7 @@ def load_all_tuning_results(tuning_dir: Path = TUNING_DIR) -> pd.DataFrame:
     gespeicherten JSON) -- werden nicht übersprungen, aber beim Vergleich
     sind sie nicht eindeutig zuordenbar. Ebenso haben Läufe VOR der
     fixed_overrides-Ergänzung fixed_overrides={} (Feld fehlte) -- ein
-    Konsument wie 09_tuning_overview.ipynb faellt dann fuer diese Felder auf
+    Konsument wie 04_tuning_overview.ipynb faellt dann fuer diese Felder auf
     seine eigenen Defaults zurueck, statt die (nicht mehr rekonstruierbaren)
     tatsaechlichen Fix-Werte des damaligen Laufs zu verwenden.
 
@@ -624,7 +624,7 @@ def ensure_dashboard_running(
     falls unter host:port noch nichts laeuft, und oeffnet den Browser-Tab.
 
     Gedacht, um vor jedem Tuning-Lauf aufgerufen zu werden (siehe
-    notebooks/04_backtest/08_tune_dynamic_vol.ipynb-Button-Callbacks) --
+    notebooks/03_backtest/03_tune_dynamic_vol.ipynb-Button-Callbacks) --
     idempotent: ein bereits laufendes Dashboard (egal ob von uns oder
     manuell gestartet) wird nicht doppelt gestartet, der Browser-Tab wird
     trotzdem geoeffnet, damit der Nutzer bei jedem Klick wieder direkt zum

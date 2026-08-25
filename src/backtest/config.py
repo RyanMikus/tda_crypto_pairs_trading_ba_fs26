@@ -63,7 +63,7 @@ class BasketParams:
     # --- Signal ---
     entry_z: float = 2.0
     exit_z: float = 0.5
-    # Opposite-Band-Exit (docs/project/"Suggested methods...pdf", Abschnitt A.1):
+    # Opposite-Band-Exit (docs/project/"woo_2026b_suggested-trading-methods.pdf", Abschnitt A.1):
     # statt bei Rueckkehr zur Mitte (|z| <= exit_z) zu schliessen, wird bis zum
     # GEGENUEBERLIEGENDEN Band gehalten -- Short (Entry bei z=+entry_z) haelt bis
     # z <= -entry_z, Long (Entry bei z=-entry_z) haelt bis z >= +entry_z (siehe
@@ -109,7 +109,7 @@ class BasketParams:
     exit_on_clique_break: bool = True  # Mitgliedschaftswechsel beim nächsten Snapshot
     max_data_gap_candles: int = 6
     # Topologischer Struktur-Break-Detektor (Single-Linkage/fcluster bei ε*-δ, siehe
-    # docs/project/BA_aufgabenstellung_zusatz.pdf und exit_rules.TopologicalBreakRule).
+    # docs/project/woo_2026a_additional-information.pdf und exit_rules.TopologicalBreakRule).
     # epsilon* = position.entry_death (eingefroren bei Entry aus CliqueSnapshot.death,
     # NICHT persistence). topo_break_window_candles=None -> Default ist
     # position.entry_lookback_days in Kerzen umgerechnet (candles_per_day(candle_minutes),
@@ -181,9 +181,9 @@ def scale_candle_fields_to_candle_minutes(params: "BasketParams", candle_minutes
     Zentrale Umrechnung fuer jeden Aufrufer, der BasketParams-Defaults (oder mit
     dataclasses.replace() nur TEILWEISE ueberschriebene BasketParams, z.B. best_params
     aus einem Tuning-Lauf, das diese Felder nicht selbst gesucht hat) fuer eine von
-    5min abweichende candle_minutes verwendet -- siehe notebooks/04_backtest/
-    08_tune_dynamic_vol.ipynb (Widget-Panel, Slider in Tagen/Stunden statt Kerzen) und
-    09_tuning_overview.ipynb (BASE_PARAMS-Fallback fuer Felder, die best_params nicht
+    5min abweichende candle_minutes verwendet -- siehe notebooks/03_backtest/
+    03_tune_dynamic_vol.ipynb (Widget-Panel, Slider in Tagen/Stunden statt Kerzen) und
+    04_tuning_overview.ipynb (BASE_PARAMS-Fallback fuer Felder, die best_params nicht
     enthaelt) fuer die beiden Aufrufer, die dasselbe Problem sonst je einzeln loesen
     muessten.
 

@@ -1,7 +1,7 @@
 # data/processed/backtests/
 
 Gespeicherte Backtest-Runs (`src/backtest/runs.py::save_run`), aufgerufen am Ende jedes
-Notebooks in `notebooks/04_backtest/`. Pro Run ein Unterordner
+Notebooks in `notebooks/03_backtest/`. Pro Run ein Unterordner
 `<run_id>/` (Zeitstempel + Label-Slug + Config-Fingerprint), Ordnerinhalt selbst steht in
 `.gitignore` (`data/processed/backtests/*/`) — nur der Gesamt-Index unten wird versioniert.
 
@@ -12,7 +12,7 @@ aufgebaut (`list_runs(refresh_index=True)`). Spalten: `run_id`, `created_at`, `l
 `description`, `strategy_name`, `clique_variant`, `baskets`, `backtest_start`,
 `backtest_end`, `fingerprint`, sowie die wichtigsten Kennzahlen (`n_trades`,
 `sharpe_daily`, `cagr_daily`, `max_drawdown_pct`, `runtime_seconds`) als Schnellübersicht.
-Erlaubt `notebooks/04_backtest/04_run_comparison.ipynb`, mehrere Runs zu vergleichen, ohne
+Erlaubt `notebooks/03_backtest/02_run_comparison.ipynb`, mehrere Runs zu vergleichen, ohne
 jeden einzelnen Run-Ordner öffnen zu müssen.
 
 ## Inhalt eines `<run_id>/`-Ordners (nicht versioniert)
