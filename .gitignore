@@ -46,3 +46,12 @@ data/processed/backtests/*/
 # wuerde den Ordner komplett blocken, Datei-Ausnahmen darin waeren wirkungslos).
 data/processed/tuning/*
 !data/processed/tuning/README.md
+
+# Gleiches Prinzip fuer den finalen Tuning-Dbstore: die grossen, regenerierbaren
+# OHLCV-Preis-Caches (.pkl) nicht tracken, die kleinen best_params.json (die
+# eigentlichen Tuning-Ergebnisse) bleiben ueber die Ausnahme getrackt.
+data/processed/tuning_dbstore_final/*/*
+!data/processed/tuning_dbstore_final/*/best_params.json
+
+# Generierter pytest-Report (regenerierbar via notebooks/run_tests.ipynb / pytest)
+tests/.last_run_report.xml
