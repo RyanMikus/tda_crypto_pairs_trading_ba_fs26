@@ -157,7 +157,7 @@ def _weighted_log_spread(price_df: pd.DataFrame, weights) -> np.ndarray:
 
 
 def compute_spread_return_rv(price_df: pd.DataFrame, weights) -> float | None:
-    """sigma_S,t^RV (docs/project/"Suggested methods...pdf", Abschnitt A.2):
+    """sigma_S,t^RV (docs/project/"woo_2026b_suggested-trading-methods.pdf", Abschnitt A.2):
     realisierte Volatilitaet der SPREAD-RETURNS (nicht der Preise) ueber das
     GESAMTE uebergebene price_df-Fenster -- der live, pro Bar berechnete
     Gegenpart zu rv_base/rv_low/rv_high aus compute_realized_vol_regime()

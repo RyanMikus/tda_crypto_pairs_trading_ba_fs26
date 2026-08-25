@@ -108,7 +108,7 @@ class CliqueBreakRule:
 
 @dataclass
 class TopologicalBreakRule:
-    """Topologischer Struktur-Break-Detektor (docs/project/BA_aufgabenstellung_zusatz.pdf,
+    """Topologischer Struktur-Break-Detektor (docs/project/woo_2026a_additional-information.pdf,
     Abschnitt 2): Single-Linkage + fcluster bei epsilon* - delta, NUR auf den
     Assets der offenen Clique (kein Basket-weiter Re-Discovery-Schritt --
     genau das macht das Verfahren günstig, siehe PDF und Prototyp in

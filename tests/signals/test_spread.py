@@ -78,7 +78,7 @@ class TestEvaluateSpreadQuality:
 
 class TestRealizedVolOfSpreadReturns:
     """sigma_S,t^RV -- Bausteine fuer Dynamic Volatility-Adjusted Thresholds
-    (docs/project/"Suggested methods...pdf" A.2) und Dynamic Position Sizing (E)."""
+    (docs/project/"woo_2026b_suggested-trading-methods.pdf" A.2) und Dynamic Position Sizing (E)."""
 
     def test_compute_spread_return_rv_matches_manual_std(self):
         returns = np.array([0.01, -0.01, 0.02, -0.02, 0.01])
