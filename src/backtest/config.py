@@ -305,6 +305,14 @@ class BacktestConfig:
                 return None
             return DateRange(pd.Timestamp(r["start"]), pd.Timestamp(r["end"]))
 
+        def _known_params(raw: dict) -> dict:
+            """Filtert beim Laden gespeicherter Runs auf aktuell gültige
+            BasketParams-Felder -- seither entfernte Felder (z.B. das frühere
+            max_holding_half_life_multiplier, vor max_holding_days) sollen beim
+            Reinladen nicht crashen. params_for() bleibt für NEUE Overrides
+            bewusst strikt (Tippfehler-Schutz, siehe dort)."""
+            return {k: v for k, v in raw.items() if k in _BASKET_PARAM_FIELDS}
+
         return cls(
             label=d["label"],
             description=d.get("description", ""),
@@ -314,8 +322,11 @@ class BacktestConfig:
             cluster_variant=d.get("cluster_variant", "raw_24h"),
             strategy_name=d.get("strategy_name", "pairwise_zscore"),
             strategy_kwargs=d.get("strategy_kwargs", {}),
-            default_params=BasketParams(**d.get("default_params", {})),
-            basket_overrides=d.get("basket_overrides", {}),
+            default_params=BasketParams(**_known_params(d.get("default_params", {}))),
+            basket_overrides={
+                basket: _known_params(override)
+                for basket, override in d.get("basket_overrides", {}).items()
+            },
             initial_capital=d.get("initial_capital", 100_000.0),
             max_gross_exposure=d.get("max_gross_exposure", 1.0),
             max_total_positions=d.get("max_total_positions", 12),
