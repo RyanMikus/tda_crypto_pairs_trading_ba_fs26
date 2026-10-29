@@ -7,8 +7,7 @@ persistente Homologie) handelbare Clustern von Kryptowährungen mit Mean-Reversi
 Verhalten identifizieren lassen, und backtestet eine darauf aufbauende Pairs-Trading-
 Strategie (Bollinger-Band/Z-Score) auf Binance-Daten.
 
-Die vollständige Arbeit liegt unter [`docs/bachelorarbeit.pdf`](docs/bachelorarbeit.pdf),
-die Verteidigungs-Präsentation unter [`docs/presentation.pdf`](docs/presentation.pdf).
+Die vollständige Arbeit liegt unter [`bachelorarbeit.pdf`](bachelorarbeit.pdf).
 
 ## Setup
 
@@ -33,22 +32,21 @@ src/                          Wiederverwendbare Logik hinter den Notebooks
 └── backtest/                   Engine, Strategie, Exit-Regeln, Tuning
 
 data/
-├── raw/                        Unveränderte Rohdaten (CoinGecko, Binance)
+├── raw/                        Rohdaten (CoinGecko, Binance)
 └── processed/                   Abgeleitete Ergebnisse (Clustern, Tuning, Backtest-Runs)
 
 docs/
-├── bachelorarbeit.pdf           Die Arbeit selbst
-├── presentation.pdf             Verteidigungs-Präsentation
-├── project/                     Aufgabenstellungen & Zusatzmaterial des Referenten
-├── references/                  Zitierte wissenschaftliche Literatur
 └── uml/                         Architektur-Diagramme
 
 images/                          Abbildungen der Arbeit (generiert von BA_visualizations.ipynb)
 tests/                           pytest-Suite
 ```
 
-Jeder Unterordner unter `data/` sowie `notebooks/03_backtest/` hat eine eigene
-`README.md` mit Details zu Herkunft, Format und erzeugendem Notebook/Modul.
+Die Daten unter `data/` sind aus lizenzrechtlichen Gründen nicht im Repository enthalten:
+Die Rohdaten werden mit den Notebooks unter `01_data_aquisition/` neu abgerufen, die
+abgeleiteten Ergebnisse durch die nachfolgenden Notebooks erzeugt. Jeder Unterordner
+unter `data/` sowie `notebooks/03_backtest/` hat eine eigene `README.md` mit Details
+zu Herkunft, Format und erzeugendem Notebook/Modul.
 
 ## Notebook-Reihenfolge
 
